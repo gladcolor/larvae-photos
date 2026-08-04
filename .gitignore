@@ -1,0 +1,7 @@
+# Never publish the API credentials
+config.ini
+.ec5_token.json
+
+# Local working output (tables, geopackage, token cache)
+output/
+*.gpkg
