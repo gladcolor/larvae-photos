@@ -103,3 +103,29 @@ layer.upsert(df, key_field="ec5_uuid",
 Publish the layer once from ArcGIS Pro, style it, then let this keep it current.
 `layer.truncate()` empties it without deleting it, for a full rebuild that still
 keeps the symbology.
+
+### When a republish is unavoidable
+
+Adding a question in Epicollect5 changes the schema, and then the layer really does
+have to be republished. Overwrite recreates the service, so the web map's symbology,
+popups and aliases are orphaned. Back them up first and put them back afterwards:
+
+```python
+from arcgis_sync import ArcGISLayer, ArcGISOnline
+
+layer = ArcGISLayer(LAYER_URL, username=USER, password=PW)
+layer.save_definition("layer_def.json")          # renderer, popup, aliases
+
+agol = ArcGISOnline(username=USER, password=PW)
+agol.save_web_map(WEBMAP_ITEM_ID, "webmap.json")  # the web map's own styling
+
+# ... republish from ArcGIS Pro ...
+
+layer = ArcGISLayer(NEW_LAYER_URL, username=USER, password=PW)
+layer.restore_definition("layer_def.json")
+agol.restore_web_map(WEBMAP_ITEM_ID, "webmap.json", owner=USER,
+                     old_layer_url=LAYER_URL, new_layer_url=NEW_LAYER_URL)
+```
+
+`restore_definition` only reapplies aliases for fields that still exist, so a schema
+change does not make the whole call fail.

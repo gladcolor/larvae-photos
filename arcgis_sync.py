@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -284,3 +285,97 @@ class ArcGISLayer:
     def truncate(self):
         """Delete every row but keep the layer, its schema and its symbology."""
         return self._post("deleteFeatures", {"where": "1=1"})
+
+    # -------------------------------------------------- symbology backup
+    def save_definition(self, path):
+        """Save the layer's renderer, popup and aliases to a JSON file.
+
+        Overwriting a web layer recreates the service, so anything configured on
+        it is lost. Run this before a republish and `restore_definition` after,
+        and the styling survives a schema change.
+        """
+        props = self.properties
+        keep = {k: props[k] for k in
+                ("drawingInfo", "popupInfo", "displayField", "templates",
+                 "minScale", "maxScale", "defaultVisibility", "timeInfo")
+                if k in props}
+        keep["fieldAliases"] = {f["name"]: f.get("alias", f["name"])
+                                for f in props.get("fields", [])}
+        Path(path).write_text(json.dumps(keep, indent=1), encoding="utf-8")
+        return keep
+
+    def restore_definition(self, path, include_aliases=True):
+        """Push a saved renderer/popup back onto this layer.
+
+        Uses the admin endpoint, so the signed-in account must own the layer.
+        Aliases are only reapplied for fields that still exist, so a schema change
+        does not make the whole call fail.
+        """
+        saved = json.loads(Path(path).read_text(encoding="utf-8"))
+        aliases = saved.pop("fieldAliases", {})
+
+        if include_aliases and aliases:
+            present = {f["name"] for f in self.properties.get("fields", [])}
+            saved["fields"] = [{"name": name, "alias": alias}
+                               for name, alias in aliases.items() if name in present]
+
+        admin_url = self.url.replace("/rest/services/", "/rest/admin/services/")
+        resp = requests.post(
+            f"{admin_url}/updateDefinition",
+            data={"updateDefinition": json.dumps(saved), "f": "json",
+                  "token": self.token},
+            timeout=180,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        if "error" in payload:
+            raise ArcGISError(f"updateDefinition: {payload['error']}")
+        self._properties = None            # force a refresh next time
+        return payload
+
+
+class ArcGISOnline:
+    """Just enough Portal API to back up and restore a web map's configuration.
+
+    Web map symbology lives in the web map item, not in the feature layer, so
+    republishing the layer orphans it. Save the web map before a republish, then
+    restore it (pointing at the new service URL if it changed).
+    """
+
+    def __init__(self, token=None, username=None, password=None,
+                 portal="https://www.arcgis.com"):
+        self.portal = portal.rstrip("/")
+        if token is None:
+            if not (username and password):
+                raise ValueError("pass either token= or username= and password=")
+            token = generate_token(username, password, referer=self.portal)
+        self.token = token
+
+    def item_data(self, item_id):
+        """The item's JSON payload - for a web map, its operational layers."""
+        resp = requests.get(f"{self.portal}/sharing/rest/content/items/{item_id}/data",
+                            params={"f": "json", "token": self.token}, timeout=120)
+        resp.raise_for_status()
+        return resp.json()
+
+    def save_web_map(self, item_id, path):
+        data = self.item_data(item_id)
+        Path(path).write_text(json.dumps(data, indent=1), encoding="utf-8")
+        layers = [layer.get("title") for layer in data.get("operationalLayers", [])]
+        return layers
+
+    def restore_web_map(self, item_id, path, owner, new_layer_url=None,
+                        old_layer_url=None):
+        """Push a saved web map back, optionally repointing it at a new service."""
+        text = Path(path).read_text(encoding="utf-8")
+        if new_layer_url and old_layer_url:
+            text = text.replace(old_layer_url.rstrip("/"), new_layer_url.rstrip("/"))
+        resp = requests.post(
+            f"{self.portal}/sharing/rest/content/users/{owner}/items/{item_id}/update",
+            data={"text": text, "f": "json", "token": self.token}, timeout=180,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        if "error" in payload:
+            raise ArcGISError(f"item update: {payload['error']}")
+        return payload
