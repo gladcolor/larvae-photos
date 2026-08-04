@@ -1,0 +1,76 @@
+// ---------------------------------------------------------------------------
+// Compact 2-column photo grid - Semera / Logiya larval habitat layer
+//
+// Six stacked photos make a popup you have to scroll for a long time. This lays
+// them out two per row in a table and puts the whole thing inside a collapsible
+// <details> block, so the popup opens short and expands on demand.
+//
+// Every tag used here is on the ArcGIS Online sanitiser allowlist:
+//   table tr td b br a img details summary div  + inline style
+// Tags that are NOT allowed and get stripped: iframe, script, <style>, form,
+// and any event handler such as onclick.
+//
+// HOW TO USE
+//   Configure pop-ups -> Add content -> Text -> fx -> New expression
+//   Paste, name it "photoGrid", then insert {expression/exprN} in the text box.
+// ---------------------------------------------------------------------------
+
+var wanted = [
+    ["Surrounding",         "f_6_Surrounding_url"],
+    ["Down (entire water)", "f_7_Down_entire_water_url"],
+    ["North",               "f_8_North_url"],
+    ["South",               "f_9_South_url"],
+    ["East",                "f_10_East_url"],
+    ["West",                "f_11_West_url"]
+];
+
+// Look fields up rather than naming them directly, so a field missing from the
+// hosted layer reports itself instead of throwing "Key not found".
+var available = {};
+for (var i in Schema($feature).fields) {
+    var fieldName = Schema($feature).fields[i].name;
+    available[Lower(fieldName)] = fieldName;
+}
+
+var cells = [];
+var missing = "";
+
+for (var j in wanted) {
+    var key = Lower(wanted[j][1]);
+    if (!HasKey(available, key)) {
+        missing += wanted[j][1] + " ";
+        continue;
+    }
+    var url = Attribute($feature, available[key]);
+    if (IsEmpty(url)) { continue; }
+
+    var cell = "<td style='width:50%; padding:3px; vertical-align:top;'>" +
+               "<a href='" + url + "' target='_blank'>" +
+               "<img src='" + url + "' style='width:100%; border-radius:3px;' />" +
+               "</a>" +
+               "<div style='font-size:11px; text-align:center;'>" + wanted[j][0] +
+               "</div></td>";
+    cells[Count(cells)] = cell;
+}
+
+if (Count(cells) == 0) {
+    if (missing != "") {
+        return "<p><i>Photo fields missing from this layer: " + missing +
+               "<br />Re-publish from a GeoPackage that already has photo URLs.</i></p>";
+    }
+    return "<p><i>No photos for this site yet.</i></p>";
+}
+
+// Two cells per row.
+var rows = "";
+for (var k = 0; k < Count(cells); k += 2) {
+    var second = "<td style='width:50%;'></td>";
+    if (k + 1 < Count(cells)) { second = cells[k + 1]; }
+    rows += "<tr>" + cells[k] + second + "</tr>";
+}
+
+var table = "<table style='width:100%; border-collapse:collapse;'>" + rows + "</table>";
+
+// Collapsed by default. Delete the details/summary wrapper to always show them.
+return "<details open><summary style='cursor:pointer;'><b>Photos (" +
+       Count(cells) + ")</b></summary>" + table + "</details>";
