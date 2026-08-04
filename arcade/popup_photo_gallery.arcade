@@ -1,42 +1,65 @@
 // ---------------------------------------------------------------------------
 // Popup photo gallery - Semera / Logiya larval habitat layer
 //
-// Shows every published photo for the clicked site, with a heading per view,
-// and silently skips any photo that has not been published yet so the popup
-// never renders a broken image.
+// Shows every published photo for the clicked site, with a heading per view.
+// Photos that are not published yet are skipped, so the popup never renders a
+// broken image.
+//
+// This version looks the fields up through Schema() instead of writing
+// $feature.f_6_Surrounding_url directly, so a field that is missing from the
+// hosted layer is reported rather than throwing
+//   "Execution error - Key not found - f_6_Surrounding_url"
+//
+// That error means the hosted layer has no such field. ArcGIS Online DROPS
+// ALL-NULL COLUMNS when it publishes a GeoPackage, and a photo URL column stays
+// null until those photos are pushed to GitHub. Publish from a GeoPackage that
+// already has some URLs filled in, then overwrite it daily after that.
+// Run list_fields.arcade to see the names the layer really has.
 //
 // HOW TO USE
-//   1. Open the hosted feature layer item -> Visualization -> Configure pop-ups
+//   1. Hosted feature layer item -> Visualization -> Configure pop-ups
 //   2. Add content -> Text
 //   3. In the text editor click the {} / fx button -> New expression
 //   4. Paste this whole file, name it "photoGallery", click Done
-//   5. In the text box insert  {expression/expr0}   (or whatever number it got)
-//
-// The layer must have the *_url fields written by download_epicollect5.ipynb.
-// A field is empty until that photo has been pushed to the GitHub repository.
+//   5. In the text box insert  {expression/expr0}
 // ---------------------------------------------------------------------------
 
-var photos = [
-    { "label": "Surrounding",          "url": $feature.f_6_Surrounding_url },
-    { "label": "Down (entire water)",  "url": $feature.f_7_Down_entire_water_url },
-    { "label": "North",                "url": $feature.f_8_North_url },
-    { "label": "South",                "url": $feature.f_9_South_url },
-    { "label": "East",                 "url": $feature.f_10_East_url },
-    { "label": "West",                 "url": $feature.f_11_West_url }
+// label shown in the popup  ->  field name written by download_epicollect5.ipynb
+var wanted = [
+    ["Surrounding",         "f_6_Surrounding_url"],
+    ["Down (entire water)", "f_7_Down_entire_water_url"],
+    ["North",               "f_8_North_url"],
+    ["South",               "f_9_South_url"],
+    ["East",                "f_10_East_url"],
+    ["West",                "f_11_West_url"]
 ];
+
+// Map lower-cased field name -> the layer's actual spelling, so the expression
+// survives any case change ArcGIS applies when publishing.
+var available = {};
+for (var i in Schema($feature).fields) {
+    var name = Schema($feature).fields[i].name;
+    available[Lower(name)] = name;
+}
 
 var html = "";
 var shown = 0;
+var missing = "";
 
-for (var i in photos) {
-    var photo = photos[i];
-    var url = photo["url"];
+for (var j in wanted) {
+    var label = wanted[j][0];
+    var key = Lower(wanted[j][1]);
+
+    if (!HasKey(available, key)) {
+        missing += wanted[j][1] + " ";
+        continue;
+    }
+
+    var url = Attribute($feature, available[key]);
     if (IsEmpty(url)) { continue; }
 
     html += "<p style='margin:0 0 12px 0;'>";
-    html += "<b>" + photo["label"] + "</b><br />";
-    // A plain <img> is all ArcGIS Online allows; wrapping it in <a> lets the
-    // viewer open the full-size photo in a new tab.
+    html += "<b>" + label + "</b><br />";
     html += "<a href='" + url + "' target='_blank'>";
     html += "<img src='" + url + "' style='width:100%; max-width:420px; border-radius:4px;' />";
     html += "</a></p>";
@@ -44,6 +67,12 @@ for (var i in photos) {
 }
 
 if (shown == 0) {
+    if (missing != "") {
+        // Configuration problem, not a data problem: say so plainly.
+        return "<p><i>Photo fields are not in this layer: " + missing +
+               "<br />Re-publish the layer from a GeoPackage that already has "
+               + "photo URLs filled in.</i></p>";
+    }
     return "<p><i>No photos published for this site yet.</i></p>";
 }
 

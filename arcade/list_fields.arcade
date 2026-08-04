@@ -1,0 +1,27 @@
+// ---------------------------------------------------------------------------
+// Diagnostic: list the field names the PUBLISHED layer actually has
+//
+// Run this first whenever a popup expression fails with
+//   "Execution error - Key not found - <field>"
+// That error means the hosted layer does not contain the field, which usually
+// happens because ArcGIS Online DROPS COLUMNS THAT ARE ENTIRELY NULL when it
+// publishes a GeoPackage. A photo URL column is all-null until the matching
+// photos have been pushed to GitHub, so publishing too early loses the column.
+//
+// Fix: re-publish (or overwrite) from a GeoPackage where at least one row has a
+// URL, then re-run this to confirm the names.
+//
+// HOW TO USE
+//   Configure pop-ups -> Add content -> Text -> fx -> New expression
+//   Paste this, run the tester, read the list, then delete the expression.
+// ---------------------------------------------------------------------------
+
+var info = Schema($feature);
+var text = "Fields in this layer:\n\n";
+
+for (var i in info.fields) {
+    var f = info.fields[i];
+    text += f.name + "   [" + f.type + "]\n";
+}
+
+return text;
