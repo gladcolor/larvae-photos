@@ -1,5 +1,15 @@
 # Semera / Logiya larval habitat photos
 
+> ## Internal use only — all rights reserved
+>
+> **Reuse of any kind is not permitted.** These photographs, data and code are for
+> internal use by the Semera / Logiya larval habitat study team only. Do not copy,
+> redistribute, republish, or use them to train or evaluate any model. See
+> [NOTICE.md](NOTICE.md).
+>
+> This repository is public only so the ArcGIS Online map can load the photos into
+> its popups. That does not grant any licence to reuse them.
+
 Field photos from the Epicollect5 project `semera-logiya-202608`, published so that
 an ArcGIS Online popup can display them, together with the code that produces them.
 

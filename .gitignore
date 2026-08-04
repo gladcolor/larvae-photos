@@ -11,3 +11,8 @@ models/
 
 __pycache__/
 *.pyc
+
+# Data tables are not published from this repository
+*.csv
+*.xlsx
+tables/

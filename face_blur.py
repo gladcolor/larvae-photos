@@ -1,5 +1,9 @@
 """Detect and blur human faces in a folder of photos.
 
+INTERNAL USE ONLY. All rights reserved. Reuse of any kind is not permitted; see
+NOTICE.md in this repository.
+
+
 Anonymises field photos before they are published, using OpenCV's YuNet detector
 (bundled with cv2 since 4.5.4). Importable as a module or runnable as a script:
 
