@@ -24,6 +24,7 @@ never committed.
 | `download_epicollect5.ipynb` | Downloads the Epicollect5 table and photos, blurs faces, publishes here, and writes a GeoPackage for ArcGIS Online |
 | `face_blur.py` | Reusable face detection and blurring, as a module and a CLI |
 | `arcade/` | Arcade expressions for the ArcGIS Online popup |
+| `arcgis_sync.py` | Append/upsert rows into a hosted feature layer without losing its symbology |
 
 ## Photo URLs
 
@@ -75,3 +76,30 @@ The URL fields are `f_6_Surrounding_url`, `f_7_Down_entire_water_url`,
 `f_8_North_url`, `f_9_South_url`, `f_10_East_url`, `f_11_West_url`. Confirm the exact
 spelling in the published layer first, since ArcGIS Online can rename fields when it
 publishes a GeoPackage.
+
+## Updating ArcGIS Online without losing symbology
+
+Overwriting a hosted feature layer replaces the service, which is why styling, popup
+configuration and field aliases come back reset. `arcgis_sync.py` edits the rows of
+the existing layer instead, matching on `ec5_uuid`: a row already there is updated in
+place, a new one is inserted, and nothing else is touched.
+
+```python
+from arcgis_sync import ArcGISLayer
+layer = ArcGISLayer(LAYER_URL, username="...", password="...")
+print(layer.upsert(gdf, key_field="ec5_uuid"))
+```
+
+It needs only `requests` and `pandas`, so it runs both in the notebook environment
+(geopandas, no `arcgis`) and in the ArcGIS Pro environment (`arcpy`, no geopandas).
+In the Pro environment pass the coordinate columns instead of a geometry:
+
+```python
+layer.upsert(df, key_field="ec5_uuid",
+             lon_field="f_4_Record_the_coordin_longitude",
+             lat_field="f_4_Record_the_coordin_latitude")
+```
+
+Publish the layer once from ArcGIS Pro, style it, then let this keep it current.
+`layer.truncate()` empties it without deleting it, for a full rebuild that still
+keeps the symbology.
