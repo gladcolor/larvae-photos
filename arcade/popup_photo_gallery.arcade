@@ -1,0 +1,50 @@
+// ---------------------------------------------------------------------------
+// Popup photo gallery - Semera / Logiya larval habitat layer
+//
+// Shows every published photo for the clicked site, with a heading per view,
+// and silently skips any photo that has not been published yet so the popup
+// never renders a broken image.
+//
+// HOW TO USE
+//   1. Open the hosted feature layer item -> Visualization -> Configure pop-ups
+//   2. Add content -> Text
+//   3. In the text editor click the {} / fx button -> New expression
+//   4. Paste this whole file, name it "photoGallery", click Done
+//   5. In the text box insert  {expression/expr0}   (or whatever number it got)
+//
+// The layer must have the *_url fields written by download_epicollect5.ipynb.
+// A field is empty until that photo has been pushed to the GitHub repository.
+// ---------------------------------------------------------------------------
+
+var photos = [
+    { "label": "Surrounding",          "url": $feature.f_6_Surrounding_url },
+    { "label": "Down (entire water)",  "url": $feature.f_7_Down_entire_water_url },
+    { "label": "North",                "url": $feature.f_8_North_url },
+    { "label": "South",                "url": $feature.f_9_South_url },
+    { "label": "East",                 "url": $feature.f_10_East_url },
+    { "label": "West",                 "url": $feature.f_11_West_url }
+];
+
+var html = "";
+var shown = 0;
+
+for (var i in photos) {
+    var photo = photos[i];
+    var url = photo["url"];
+    if (IsEmpty(url)) { continue; }
+
+    html += "<p style='margin:0 0 12px 0;'>";
+    html += "<b>" + photo["label"] + "</b><br />";
+    // A plain <img> is all ArcGIS Online allows; wrapping it in <a> lets the
+    // viewer open the full-size photo in a new tab.
+    html += "<a href='" + url + "' target='_blank'>";
+    html += "<img src='" + url + "' style='width:100%; max-width:420px; border-radius:4px;' />";
+    html += "</a></p>";
+    shown++;
+}
+
+if (shown == 0) {
+    return "<p><i>No photos published for this site yet.</i></p>";
+}
+
+return html;
