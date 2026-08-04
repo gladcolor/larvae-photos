@@ -8,3 +8,6 @@ output/
 
 # Auto-downloaded face detector weights (~230 KB, fetched on first run)
 models/
+
+__pycache__/
+*.pyc
