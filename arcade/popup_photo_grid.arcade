@@ -11,8 +11,11 @@
 // and any event handler such as onclick.
 //
 // HOW TO USE
-//   Configure pop-ups -> Add content -> Text -> fx -> New expression
-//   Paste, name it "photoGrid", then insert {expression/exprN} in the text box.
+//   Configure pop-ups -> Add content -> **Arcade**   (not "Text")
+//   Paste, name it "photoGrid", click Done.
+//   This returns a pop-up ELEMENT, which is what the Arcade content element
+//   expects. A Text element wants a plain string instead and would show
+//   "[object Object]".
 // ---------------------------------------------------------------------------
 
 var wanted = [
@@ -54,11 +57,13 @@ for (var j in wanted) {
 }
 
 if (Count(cells) == 0) {
+    var empty = "<p><i>No photos for this site yet.</i></p>";
     if (missing != "") {
-        return "<p><i>Photo fields missing from this layer: " + missing +
-               "<br />Re-publish from a GeoPackage that already has photo URLs.</i></p>";
+        empty = "<p><i>Photo fields missing from this layer: " + missing +
+                "<br />Re-publish from a GeoPackage that already has photo URLs.</i></p>";
     }
-    return "<p><i>No photos for this site yet.</i></p>";
+    Console(empty);
+    return { "type": "text", "text": empty };
 }
 
 // Two cells per row.
@@ -71,6 +76,9 @@ for (var k = 0; k < Count(cells); k += 2) {
 
 var table = "<table style='width:100%; border-collapse:collapse;'>" + rows + "</table>";
 
-// Collapsed by default. Delete the details/summary wrapper to always show them.
-return "<details open><summary style='cursor:pointer;'><b>Photos (" +
-       Count(cells) + ")</b></summary>" + table + "</details>";
+// Open by default. Change <details open> to <details> to start collapsed.
+var html = "<details open><summary style='cursor:pointer;'><b>Photos (" +
+           Count(cells) + ")</b></summary>" + table + "</details>";
+
+Console(html);
+return { "type": "text", "text": html };

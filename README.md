@@ -62,12 +62,18 @@ Re-running only processes files not already present in the output folder.
 
 Two ready-made Arcade expressions are in `arcade/`:
 
-* `popup_photo_gallery.arcade` - all six views in one scrollable popup, each
-  clickable to open full size, skipping photos that are not published yet.
-  Configure pop-ups -> Add content -> **Text** -> `fx` -> paste -> insert
-  `{expression/expr0}`.
-* `popup_first_photo.arcade` - returns a single URL for a popup **Image** media
-  element, or `""` when the site has no photo so nothing broken is shown.
+* `popup_photo_grid.arcade` - two photos per row inside a collapsible block, the
+  most compact option. Add content -> **Arcade**.
+* `popup_photo_gallery.arcade` - one large image per row, each clickable to open
+  full size. Add content -> **Arcade**.
+* `popup_first_photo.arcade` - returns a single URL string for a popup **Image**
+  media element, or `""` when the site has no photo.
+* `list_fields.arcade` - diagnostic, lists the field names the published layer
+  really has. Run this first if an expression fails with "Key not found".
+
+The two gallery expressions return a pop-up **element** (`{"type": "text", ...}`),
+so they belong in an **Arcade** content element. A **Text** element expects a plain
+string referenced as `{expression/expr0}` and would render `[object Object]`.
 
 For a single fixed view no Arcade is needed at all: set an Image element's URL to
 `{f_8_North_url}`.
