@@ -2,6 +2,9 @@
 config.ini
 .ec5_token.json
 
-# Local working output (tables, geopackage, token cache)
+# Local working output (originals, tables, geopackage)
 output/
 *.gpkg
+
+# Auto-downloaded face detector weights (~230 KB, fetched on first run)
+models/
