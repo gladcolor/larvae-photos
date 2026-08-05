@@ -79,11 +79,15 @@ def load_add_cross(explicit=None):
 
 
 def annotate_patch(array, add_cross, pixel_size_m, patch_metres, arm_metres,
-                   id_label=None):
+                   id_label=None, cross_alpha=150, label_alpha=150):
     """Draw the red cross and ruler labels onto one patch.
 
     `cross_length` is the arm HALF-length in pixels, while `arm_label_m` is the
     label for the FULL arm, so the half-length is derived from half the arm.
+
+    The alphas are deliberately well below opaque: the annotation has to be
+    readable without hiding the ground it sits on, which is the whole point of
+    looking at the patch.
     """
     from PIL import Image
 
@@ -93,11 +97,11 @@ def annotate_patch(array, add_cross, pixel_size_m, patch_metres, arm_metres,
         image,
         cross_length=half_px,
         line_width=2 if half_px else 0,
-        transparency=200,
+        transparency=cross_alpha,
         pixel_size_m=pixel_size_m,
         arm_label_m=arm_metres,
         img_width_label_m=patch_metres,
-        label_transparency=220,
+        label_transparency=label_alpha,
         id_label=id_label,
     )
     return np.asarray(annotated.convert("RGB"))
@@ -246,6 +250,10 @@ def main(argv=None):
     parser.add_argument("--arm-metres", type=float, default=20.0,
                         help="length of the red cross arms, in metres (default 20; "
                              "0 draws no cross, only the corner labels)")
+    parser.add_argument("--cross-alpha", type=int, default=150,
+                        help="opacity of the red cross, 0-255 (default 150)")
+    parser.add_argument("--label-alpha", type=int, default=150,
+                        help="opacity of the distance labels, 0-255 (default 150)")
     parser.add_argument("--id-label", action="store_true",
                         help="burn the habitat ID into the top of each patch")
     parser.add_argument("--helper", default=None,
@@ -276,9 +284,12 @@ def main(argv=None):
     ids = (gdf["f_1_Habitat_ID"].astype(str).tolist()
            if args.id_label and "f_1_Habitat_ID" in gdf.columns else [None] * len(gdf))
     patches = [annotate_patch(p, add_cross, resolution, args.patch_metres,
-                              args.arm_metres, ids[i])
+                              args.arm_metres, ids[i],
+                              cross_alpha=args.cross_alpha,
+                              label_alpha=args.label_alpha)
                for i, p in enumerate(patches)]
-    print(f"annotated with a {args.arm_metres:g} m cross and ruler labels")
+    print(f"annotated with a {args.arm_metres:g} m cross "
+          f"(alpha {args.cross_alpha}) and labels (alpha {args.label_alpha})")
 
     if args.local_photos:
         folder = Path(args.local_photos)
