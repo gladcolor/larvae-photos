@@ -153,8 +153,9 @@ def extract_patches(raster_path, lons, lats, metres):
     return patches, size, resolution
 
 
-def build_html(gdf, patches, patch_metres, patch_px, photo_src, title):
-    """photo_src(row, field) -> a URL or data URI, or None."""
+def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
+    """patch_src(i) -> src for the satellite cell.
+    photo_src(row, field) -> a URL or data URI, or None."""
     head = """<meta charset="utf-8">
 <title>{title}</title>
 <style>
@@ -201,7 +202,7 @@ def build_html(gdf, patches, patch_metres, patch_px, photo_src, title):
         info.append(f"<div>{row.geometry.y:.5f}, {row.geometry.x:.5f}</div>")
         cells.append(f'<td class="info">{"".join(info)}</td>')
 
-        patch_uri = patch_data_uri(patches[position])
+        patch_uri = patch_src(position)
         cells.append(
             f'<td><div class="satwrap">'
             f'<a class="zoom" href="{patch_uri}" target="_blank">'
@@ -247,6 +248,13 @@ def main(argv=None):
                              "(default 100, i.e. 100 x 100 m)")
     parser.add_argument("--local-photos", default=None, metavar="DIR",
                         help="embed photos from this folder instead of linking to URLs")
+    parser.add_argument("--patch-dir", default=None, metavar="DIR",
+                        help="write the satellite patches as JPEG files here and link "
+                             "to them, instead of embedding them as data URIs. Keeps "
+                             "the HTML small and lets the browser cache each patch.")
+    parser.add_argument("--patch-url-base", default=None, metavar="PREFIX",
+                        help="URL prefix for --patch-dir files (default: the folder "
+                             "name plus a slash)")
     parser.add_argument("--photo-url-base", default=None, metavar="PREFIX",
                         help="build photo links as PREFIX + filename instead of using "
                              "the _url column. Use 'photos/' when the page is served "
@@ -320,7 +328,29 @@ def main(argv=None):
                 return None
             return str(url)
 
-    page = build_html(gdf, patches, args.patch_metres, patch_px, photo_src, args.title)
+    if args.patch_dir:
+        from PIL import Image
+
+        folder = Path(args.patch_dir)
+        folder.mkdir(parents=True, exist_ok=True)
+        prefix = args.patch_url_base or (folder.name.rstrip("/") + "/")
+        names = []
+        for i, patch in enumerate(patches):
+            key = str(gdf.iloc[i].get("ec5_uuid") or f"site{i:04d}")
+            name = f"{key}.jpg"
+            Image.fromarray(patch).save(folder / name, format="JPEG", quality=88,
+                                        subsampling=0, optimize=True)
+            names.append(prefix + name)
+        total = sum((folder / n.rsplit("/", 1)[-1]).stat().st_size for n in names)
+        print(f"wrote {len(names)} patches to {folder} ({total / 1e6:.1f} MB)")
+
+        def patch_src(i):
+            return names[i]
+    else:
+        def patch_src(i):
+            return patch_data_uri(patches[i])
+
+    page = build_html(gdf, patch_src, args.patch_metres, patch_px, photo_src, args.title)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page, encoding="utf-8")
