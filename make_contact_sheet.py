@@ -247,6 +247,11 @@ def main(argv=None):
                              "(default 100, i.e. 100 x 100 m)")
     parser.add_argument("--local-photos", default=None, metavar="DIR",
                         help="embed photos from this folder instead of linking to URLs")
+    parser.add_argument("--photo-url-base", default=None, metavar="PREFIX",
+                        help="build photo links as PREFIX + filename instead of using "
+                             "the _url column. Use 'photos/' when the page is served "
+                             "from the repository root, e.g. on GitHub Pages, so the "
+                             "images load from the same origin.")
     parser.add_argument("--arm-metres", type=float, default=20.0,
                         help="length of the red cross arms, in metres (default 20; "
                              "0 draws no cross, only the corner labels)")
@@ -300,6 +305,14 @@ def main(argv=None):
                 return None
             path = folder / str(name)
             return file_data_uri(path) if path.exists() else None
+    elif args.photo_url_base:
+        import urllib.parse
+
+        def photo_src(row, field):
+            name = row.get(f"{field}_file")
+            if not name or str(name) in ("", "nan", "<NA>"):
+                return None
+            return args.photo_url_base + urllib.parse.quote(str(name))
     else:
         def photo_src(row, field):
             url = row.get(f"{field}_url")

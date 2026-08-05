@@ -19,3 +19,4 @@ tables/
 
 # Contact sheets embed licensed satellite imagery
 *.html
+!index.html
