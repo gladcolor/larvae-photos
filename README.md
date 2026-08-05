@@ -25,6 +25,7 @@ never committed.
 | `face_blur.py` | Reusable face detection and blurring, as a module and a CLI |
 | `arcade/` | Arcade expressions for the ArcGIS Online popup |
 | `arcgis_sync.py` | Append/upsert rows into a hosted feature layer without losing its symbology |
+| `make_contact_sheet.py` | HTML review sheet: satellite patch beside the field photos, one row per site |
 
 ## Photo URLs
 
@@ -135,3 +136,21 @@ agol.restore_web_map(WEBMAP_ITEM_ID, "webmap.json", owner=USER,
 
 `restore_definition` only reapplies aliases for fields that still exist, so a schema
 change does not make the whole call fail.
+
+## Site contact sheet
+
+One row per site: a satellite patch cut from the processed imagery, then the six
+field photos. Useful for reviewing what each habitat actually looks like.
+
+```bash
+python make_contact_sheet.py     --gpkg ../output/epicollect5_test.gpkg     --raster ".../Semera_Logiya_20260718_8bit.tif"     --out ../output/site_contact_sheet.html
+```
+
+The patch defaults to 100 x 100 m, sized from the raster's own resolution, and is
+annotated by `helper.add_cross` (the shared project function, not a copy) with the
+red cross and the `0 m` / `100 m` / `20 m` ruler labels. Options: `--patch-metres`,
+`--arm-metres`, `--id-label`, `--local-photos` to embed photos instead of linking
+them, `--helper` if `helper.py` is somewhere unusual.
+
+**The generated HTML embeds licensed satellite imagery and must not be published.**
+It is gitignored here for that reason.

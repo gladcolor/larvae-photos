@@ -16,3 +16,6 @@ __pycache__/
 *.csv
 *.xlsx
 tables/
+
+# Contact sheets embed licensed satellite imagery
+*.html
