@@ -263,7 +263,8 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
         created = row.get("created_at")
         if created is not None and str(created) not in ("", "NaT"):
             info.append(f"<div>{html.escape(str(created)[:16])}</div>")
-        info.append(f"<div>{row.geometry.y:.5f}, {row.geometry.x:.5f}</div>")
+        # Coordinates are deliberately not printed: the page is public, and the
+        # satellite patch already shows the location to anyone who needs it.
         cells.append(f'<td class="info">{"".join(info)}</td>')
 
         patch_uri = patch_src(position)

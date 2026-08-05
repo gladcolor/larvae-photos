@@ -1,5 +1,7 @@
 # Semera / Logiya larval habitat photos
 
+**Site: https://gladcolor.github.io/larvae-photos/**
+
 > ## Internal use only — all rights reserved
 >
 > **Reuse of any kind is not permitted.** These photographs, data and code are for
@@ -26,6 +28,8 @@ never committed.
 | `arcade/` | Arcade expressions for the ArcGIS Online popup |
 | `arcgis_sync.py` | Append/upsert rows into a hosted feature layer without losing its symbology |
 | `make_contact_sheet.py` | HTML review sheet: satellite patch beside the field photos, one row per site |
+| `daily_update.py` | Runs the whole pipeline once; point Task Scheduler at this |
+| `index.html`, `patches/` | The published site |
 
 ## Photo URLs
 
@@ -154,3 +158,34 @@ them, `--helper` if `helper.py` is somewhere unusual.
 
 **The generated HTML embeds licensed satellite imagery and must not be published.**
 It is gitignored here for that reason.
+
+## Daily run
+
+```bash
+python daily_update.py
+```
+
+Three steps in order, each skippable so a partial failure can be resumed rather than restarted:
+
+| Step | What it does |
+|---|---|
+| `notebook` | new entries and photos, face blur, push photos, CSV / Excel / GeoPackage |
+| `patches` | satellite patches and the HTML contact sheet |
+| `publish` | commit and push `index.html` and `patches/` to GitHub Pages |
+
+```bash
+python daily_update.py --skip notebook            # imagery and page only
+python daily_update.py --skip notebook patches    # publish only
+```
+
+It stops at the first failing step, so a broken download never publishes a stale or half-built page. The exit code is non-zero on failure and a log accumulates in `output/daily_update.log`.
+
+Windows Task Scheduler, daily:
+
+* Program: `python.exe` from your Anaconda install
+* Arguments: the full path to `daily_update.py`, quoted
+* Start in: the `larvae-photos` folder
+
+## Sorting the contact sheet
+
+The page sorts client side with no reload: choose **Habitat ID**, **Habitat type**, **Date recorded** or **An. stephensi count**, then Ascending or Descending. Habitat IDs sort naturally, so `1004` comes before `X01` rather than by raw character order, and rows with an empty value always sink to the bottom whichever direction is active.
