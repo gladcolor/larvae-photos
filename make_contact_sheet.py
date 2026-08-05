@@ -332,6 +332,10 @@ def main(argv=None):
     parser.add_argument("--patch-url-base", default=None, metavar="PREFIX",
                         help="URL prefix for --patch-dir files (default: the folder "
                              "name plus a slash)")
+    parser.add_argument("--photo-root", default=None, metavar="DIR",
+                        help="folder that --photo-url-base maps to, used to check a "
+                             "photo exists before linking it (default: the output "
+                             "folder plus the URL prefix)")
     parser.add_argument("--photo-url-base", default=None, metavar="PREFIX",
                         help="build photo links as PREFIX + filename instead of using "
                              "the _url column. Use 'photos/' when the page is served "
@@ -393,11 +397,26 @@ def main(argv=None):
     elif args.photo_url_base:
         import urllib.parse
 
+        # Link only to photos that are actually present, so a site whose photos have
+        # not been downloaded or pushed yet shows a "no photo" placeholder instead of
+        # a broken image. As the download catches up, the placeholders fill in.
+        root = Path(args.photo_root) if args.photo_root else (
+            Path(args.out).parent / args.photo_url_base.rstrip("/"))
+        available = ({p.name for p in root.iterdir() if p.is_file()}
+                     if root.is_dir() else None)
+        if available is None:
+            print(f"note: {root} not found, linking every photo unchecked")
+        else:
+            print(f"{len(available)} photo file(s) present in {root}")
+
         def photo_src(row, field):
             name = row.get(f"{field}_file")
             if not name or str(name) in ("", "nan", "<NA>"):
                 return None
-            return args.photo_url_base + urllib.parse.quote(str(name))
+            name = str(name)
+            if available is not None and name not in available:
+                return None
+            return args.photo_url_base + urllib.parse.quote(name)
     else:
         def photo_src(row, field):
             url = row.get(f"{field}_url")
