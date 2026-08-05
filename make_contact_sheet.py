@@ -153,6 +153,60 @@ def extract_patches(raster_path, lons, lats, metres):
     return patches, size, resolution
 
 
+TOOLBAR = """<div class="bar">
+  <label for="sortkey">Sort by</label>
+  <select id="sortkey">
+    <option value="id">Habitat ID</option>
+    <option value="type">Habitat type</option>
+    <option value="date">Date recorded</option>
+    <option value="count">An. stephensi count</option>
+  </select>
+  <button id="asc"  aria-pressed="true">Ascending</button>
+  <button id="desc" aria-pressed="false">Descending</button>
+  <span class="count" id="rowcount"></span>
+</div>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var tbody = document.querySelector("tbody");
+  var rows = Array.prototype.slice.call(tbody.rows);
+  var key = "id", dir = "asc";
+  document.getElementById("rowcount").textContent = rows.length + " sites";
+
+  function sortRows() {
+    rows.sort(function (a, b) {
+      var x = a.dataset[key] || "", y = b.dataset[key] || "";
+      // Empty values always sink to the bottom, whichever direction is active,
+      // so blank rows never push real data off the top of the page.
+      if (x === "" && y !== "") return 1;
+      if (y === "" && x !== "") return -1;
+      // localeCompare with numeric handles "1004" and "X01" in one pass, and
+      // also keeps ISO timestamps in chronological order.
+      var c = x.localeCompare(y, undefined, {numeric: true, sensitivity: "base"});
+      return dir === "desc" ? -c : c;
+    });
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (r) { frag.appendChild(r); });
+    tbody.appendChild(frag);
+  }
+
+  function setDir(next) {
+    dir = next;
+    document.getElementById("asc").setAttribute("aria-pressed", String(next === "asc"));
+    document.getElementById("desc").setAttribute("aria-pressed", String(next === "desc"));
+    sortRows();
+  }
+
+  document.getElementById("sortkey").addEventListener("change", function (e) {
+    key = e.target.value; sortRows();
+  });
+  document.getElementById("asc").addEventListener("click", function () { setDir("asc"); });
+  document.getElementById("desc").addEventListener("click", function () { setDir("desc"); });
+  sortRows();
+});
+</script>
+"""
+
+
 def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
     """patch_src(i) -> src for the satellite cell.
     photo_src(row, field) -> a URL or data URI, or None."""
@@ -179,6 +233,16 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
              border-radius: 3px; color: #9a9a94; font-size: 11px;
              display: flex; align-items: center; justify-content: center; }}
  a.zoom:hover img {{ outline: 2px solid #d24317; }}
+ .bar {{ display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+         margin: 0 0 12px; font-size: 13px; }}
+ .bar select, .bar button {{ font: inherit; padding: 4px 9px; border-radius: 4px;
+    border: 1px solid #cfcfc9; background: #fff; color: inherit; cursor: pointer; }}
+ .bar button[aria-pressed="true"] {{ background: #d24317; border-color: #d24317;
+    color: #fff; }}
+ .bar .count {{ color: #6b6b66; margin-left: auto; }}
+ @media (prefers-color-scheme: dark) {{
+   .bar select, .bar button {{ background: #23232a; border-color: #3a3a42; }}
+ }}
  @media (prefers-color-scheme: dark) {{
    body {{ background: #16161a; color: #eceae5; }}
    thead th {{ background: #16161a; border-bottom-color: #3a3a42; }}
@@ -221,7 +285,18 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
             else:
                 cells.append('<td><div class="missing">no photo</div></td>')
 
-        rows.append("<tr>" + "".join(cells) + "</tr>")
+        def _key(field):
+            value = row.get(field)
+            text = "" if value is None or str(value) in ("nan", "<NA>", "NaT") else str(value)
+            return html.escape(text, quote=True)
+
+        rows.append(
+            f'<tr data-id="{_key("f_1_Habitat_ID")}" '
+            f'data-type="{_key("f_2_Habitat_type")}" '
+            f'data-date="{_key("created_at")}" '
+            f'data-count="{_key("f_3_Number_of_An_Steph")}">'
+            + "".join(cells) + "</tr>"
+        )
 
     header = ["Site", f"Satellite<br><span style='font-weight:400;color:#6b6b66'>"
                       f"{patch_metres:g} x {patch_metres:g} m</span>"]
@@ -231,7 +306,8 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
             f'<div class="sub">{len(gdf)} sites. Satellite patches are '
             f"{patch_metres} m across, centred on the recorded coordinate "
             f"(crosshair). Click a photo to open it full size.</div>\n"
-            "<table><thead><tr>"
+            + TOOLBAR
+            + "<table><thead><tr>"
             + "".join(f"<th>{h}</th>" for h in header)
             + "</tr></thead><tbody>\n" + "\n".join(rows) + "\n</tbody></table>\n")
 
