@@ -45,9 +45,15 @@ function prettify(fieldName) {
     var words = [];
     for (var k in parts) {
         var part = parts[k];
-        // Skip the leading "f" and the question number that Epicollect5 prefixes.
-        if (part == "" || part == "f") { continue; }
-        if (Count(words) == 0 && IsEmpty(Number(part)) == false) { continue; }
+        if (part == "") { continue; }
+        // Drop the leading "f" and the question number Epicollect5 prefixes, but
+        // only while no real word has been collected yet, so "f_10_South" gives
+        // "South" while a genuine word is never dropped.
+        //
+        // IsNan(), not IsEmpty(): Number("South") is NaN, and IsEmpty(NaN) is
+        // false, so the old IsEmpty test skipped EVERY part and the function fell
+        // through to returning the raw field name.
+        if (Count(words) == 0 && (part == "f" || !IsNan(Number(part)))) { continue; }
         words[Count(words)] = part;
     }
     if (Count(words) == 0) { return stem; }
