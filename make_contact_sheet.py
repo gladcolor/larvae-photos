@@ -54,6 +54,25 @@ INFO_SUFFIXES = [
 ]
 
 
+def sanitize_field_name(name, max_len=100):
+    """Same ArcGIS-safe rule the notebook applies when writing the GeoPackage.
+
+    Needed here so a question's raw name from field_catalogue.csv can be matched
+    against the sanitised column name in the layer.
+    """
+    s = re.sub(r"[^A-Za-z0-9_]+", "_", str(name))
+    s = re.sub(r"_+", "_", s).strip("_")
+    if not s:
+        s = "field"
+    if s[0].isdigit():
+        s = "f_" + s
+    if max_len and len(s) > max_len:
+        head_len = max_len // 2 - 1
+        tail_len = max_len - head_len - 2
+        s = s[:head_len].rstrip("_") + "__" + s[-tail_len:].lstrip("_")
+    return s
+
+
 def find_field(columns, suffix):
     """The column whose sanitised name ends with `suffix`, ignoring the number.
 
