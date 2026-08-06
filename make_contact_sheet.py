@@ -14,7 +14,7 @@ photos are referenced by their public URLs, which keeps the page small; pass
 
 Usage
 -----
-    python make_contact_sheet.py --gpkg ../output/epicollect5_test.gpkg \
+    python make_contact_sheet.py --gpkg ../output/epicollect5.gpkg \
         --raster "D:/.../Semera_Logiya_20260718_8bit.tif" \
         --out ../output/site_contact_sheet.html
 

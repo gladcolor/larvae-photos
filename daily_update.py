@@ -108,9 +108,13 @@ PHOTO_URL_BASE = ("https://raw.githubusercontent.com/gladcolor/larvae-photos/"
 
 
 def build_contact_sheet(patch_metres, cross_alpha, label_alpha):
-    gpkg = GPKG if GPKG.exists() else OUT_DIR / "epicollect5_test.gpkg"
+    # One canonical GeoPackage, no fallback. A fallback copy only ever hides the
+    # real problem, which is that ArcGIS Pro or QGIS still has the layer open and
+    # the notebook could not replace it.
+    gpkg = GPKG
     if not gpkg.exists():
-        log(f"  no GeoPackage found in {OUT_DIR}")
+        log(f"  {gpkg.name} not found. Run the notebook step first, and close the "
+            f"layer in ArcGIS Pro / QGIS if it failed to write.")
         return False
     if not Path(RASTER).exists():
         log(f"  raster not found: {RASTER}")
