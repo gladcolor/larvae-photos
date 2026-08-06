@@ -1,0 +1,56 @@
+# Publish docs/ to GitHub Pages.
+#
+# The legacy Pages builder clones the whole repository and then failed repeatedly:
+# this repo carries ~2200 face-blurred photos (400+ MB) that the site does not need,
+# because the page links them on raw.githubusercontent.com instead. Building here
+# lets us upload ONLY docs/ (about 14 MB: the page plus the satellite patches), so
+# the deploy is small and fast no matter how large the photo archive grows.
+name: Deploy docs to Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it, so a half-published site
+# is never left behind.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out only what the site needs
+        uses: actions/checkout@v4
+        with:
+          # A blobless, sparse checkout of docs/ avoids pulling the photo archive.
+          filter: blob:none
+          sparse-checkout: docs
+          sparse-checkout-cone-mode: true
+
+      - name: Report what is being published
+        run: |
+          echo "files: $(find docs -type f | wc -l)"
+          echo "size : $(du -sh docs | cut -f1)"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
