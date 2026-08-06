@@ -1,9 +1,13 @@
 // ---------------------------------------------------------------------------
 // First available photo URL - Semera / Logiya larval habitat layer
 //
-// Returns a single URL, for use as the source of a popup **Image** media
-// element. Returns "" when the site has no published photo, which makes ArcGIS
-// Online hide the image instead of showing a broken one.
+// Returns a single URL string, for the source of a popup **Image** media element.
+// Returns "" when the site has no published photo, which makes ArcGIS Online hide
+// the image rather than show a broken one.
+//
+// No field name is hardcoded: it takes the first field ending in "_url" that has a
+// value, so it survives the question renames and reorderings that shift every
+// Epicollect5 column name.
 //
 // HOW TO USE
 //   1. Configure pop-ups -> Add content -> Image
@@ -11,22 +15,17 @@
 //   3. Paste this file, name it "firstPhoto", click Done
 //   4. Set the image URL to  {expression/expr0}
 //
-// To pin a specific view instead, use the field directly and skip Arcade
-// entirely, e.g. set the Image URL to  {f_8_North_url}
+// To pin one specific view, skip Arcade and set the Image URL to that field
+// directly, e.g. {f_8_North_url} - but re-check the name after any form edit.
 // ---------------------------------------------------------------------------
 
-var candidates = [
-    $feature.f_6_Surrounding_url,
-    $feature.f_7_Down_entire_water_url,
-    $feature.f_8_North_url,
-    $feature.f_9_South_url,
-    $feature.f_10_East_url,
-    $feature.f_11_West_url
-];
-
-for (var i in candidates) {
-    if (!IsEmpty(candidates[i])) {
-        return candidates[i];
+for (var i in Schema($feature).fields) {
+    var fieldName = Schema($feature).fields[i].name;
+    if (Right(Lower(fieldName), 4) == "_url") {
+        var url = Attribute($feature, fieldName);
+        if (!IsEmpty(url)) {
+            return url;
+        }
     }
 }
 

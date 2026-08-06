@@ -33,25 +33,69 @@ import io
 import sys
 from pathlib import Path
 
+import re
+
 import numpy as np
 
-# Ordered as the field team shoots them: context first, then the water itself,
-# then the four cardinal views.
-PHOTO_COLUMNS = [
-    ("Surrounding", "f_6_Surrounding"),
-    ("Close up", "f_7_Down_entire_water"),
-    ("North", "f_8_North"),
-    ("South", "f_9_South"),
-    ("East", "f_10_East"),
-    ("West", "f_11_West"),
+# Column names are NOT hardcoded. Epicollect5 builds them from question order, so
+# adding or reordering a question renames every column after it - during this
+# project "9_South" became "9_East" when two questions were swapped. Anything
+# pinned to a literal name would silently show "no photo" for every site, so the
+# photo columns are discovered from the data instead, and labelled from the
+# project's own question text.
+
+# Fields that carry a site's identity, matched by suffix so the numeric prefix can
+# move. First match wins.
+INFO_SUFFIXES = [
+    ("Habitat ID", "habitat_id"),
+    ("Type", "habitat_type"),
+    ("An. stephensi", "number_of_an_steph"),
+    ("GPS acc (m)", "enter_gps_accuracy"),
 ]
 
-INFO_FIELDS = [
-    ("Habitat ID", "f_1_Habitat_ID"),
-    ("Type", "f_2_Habitat_type"),
-    ("An. stephensi", "f_3_Number_of_An_Steph"),
-    ("GPS acc (m)", "f_5_Enter_GPS_accuracy"),
-]
+
+def find_field(columns, suffix):
+    """The column whose sanitised name ends with `suffix`, ignoring the number.
+
+    Epicollect5 prefixes every column with its question number ("f_1_Habitat_ID"),
+    and that number shifts whenever the form is reordered. Matching on the tail
+    makes the lookup survive it.
+    """
+    suffix = suffix.lower()
+    for column in columns:
+        name = column.lower()
+        if name == suffix or name.endswith("_" + suffix):
+            return column
+    return None
+
+
+def discover_photo_columns(columns, catalogue=None):
+    """Return [(label, base column), ...] for every photo question in the table.
+
+    A photo question is recognised by the `<base>_file` / `<base>_url` pair the
+    notebook writes, so the set adapts automatically when the form changes. Labels
+    come from the project's question text when the field catalogue is available,
+    otherwise from the column name itself.
+    """
+    questions = {}
+    if catalogue is not None:
+        for row in catalogue.itertuples():
+            if getattr(row, "type", None) == "photo":
+                questions[sanitize_field_name(str(row.column))] = str(row.question)
+
+    found = []
+    for column in columns:
+        if not column.endswith("_file"):
+            continue
+        base = column[:-5]
+        if f"{base}_url" not in columns:
+            continue
+        label = questions.get(base)
+        if label is None:
+            # "f_10_South" -> "South";  "f_7_Down_close_up_wate" -> "Down close up wate"
+            label = re.sub(r"^f?_?\d+_", "", base).replace("_", " ").strip() or base
+        found.append((label, base))
+    return found
 
 
 def load_add_cross(explicit=None):
@@ -207,7 +251,8 @@ document.addEventListener("DOMContentLoaded", function () {
 """
 
 
-def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
+def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
+               photo_columns):
     """patch_src(i) -> src for the satellite cell.
     photo_src(row, field) -> a URL or data URI, or None."""
     head = """<meta charset="utf-8">
@@ -251,12 +296,20 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
  }}
 </style>""".format(title=html.escape(title), sat=170, photo=170, photoh=128)
 
+    columns = list(gdf.columns)
+    id_field = find_field(columns, "habitat_id")
+    type_field = find_field(columns, "habitat_type")
+    count_field = find_field(columns, "number_of_an_steph")
+    info_fields = [(label, find_field(columns, suffix))
+                   for label, suffix in INFO_SUFFIXES[1:]]
+    info_fields = [(label, field) for label, field in info_fields if field]
+
     rows = []
     for position, (_, row) in enumerate(gdf.iterrows()):
         cells = []
 
-        info = [f"<b>{html.escape(str(row.get('f_1_Habitat_ID', '')))}</b>"]
-        for label, field in INFO_FIELDS[1:]:
+        info = [f"<b>{html.escape(str(row.get(id_field, '') if id_field else ''))}</b>"]
+        for label, field in info_fields:
             value = row.get(field)
             if value is not None and str(value) not in ("", "nan", "<NA>"):
                 info.append(f"<div>{html.escape(label)}: {html.escape(str(value))}</div>")
@@ -275,7 +328,7 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
             f'alt="satellite patch" loading="lazy"></a></div></td>'
         )
 
-        for label, field in PHOTO_COLUMNS:
+        for label, field in photo_columns:
             src = photo_src(row, field)
             if src:
                 cells.append(
@@ -287,21 +340,21 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title):
                 cells.append('<td><div class="missing">no photo</div></td>')
 
         def _key(field):
-            value = row.get(field)
+            value = row.get(field) if field else None
             text = "" if value is None or str(value) in ("nan", "<NA>", "NaT") else str(value)
             return html.escape(text, quote=True)
 
         rows.append(
-            f'<tr data-id="{_key("f_1_Habitat_ID")}" '
-            f'data-type="{_key("f_2_Habitat_type")}" '
+            f'<tr data-id="{_key(id_field)}" '
+            f'data-type="{_key(type_field)}" '
             f'data-date="{_key("created_at")}" '
-            f'data-count="{_key("f_3_Number_of_An_Steph")}">'
+            f'data-count="{_key(count_field)}">'
             + "".join(cells) + "</tr>"
         )
 
     header = ["Site", f"Satellite<br><span style='font-weight:400;color:#6b6b66'>"
                       f"{patch_metres:g} x {patch_metres:g} m</span>"]
-    header += [label for label, _ in PHOTO_COLUMNS]
+    header += [label for label, _ in photo_columns]
 
     return (head + f"\n<h1>{html.escape(title)}</h1>\n"
             f'<div class="sub">{len(gdf)} sites. Satellite patches are '
@@ -352,11 +405,17 @@ def main(argv=None):
                         help="burn the habitat ID into the top of each patch")
     parser.add_argument("--helper", default=None,
                         help="path to helper.py (found automatically by default)")
-    parser.add_argument("--sort", default="f_1_Habitat_ID", help="column to sort rows by")
+    parser.add_argument("--catalogue", default=None, metavar="CSV",
+                        help="field_catalogue.csv, used to label the photo columns "
+                             "with the project's own question text "
+                             "(default: beside the GeoPackage)")
+    parser.add_argument("--sort", default=None,
+                        help="column to sort rows by (default: the habitat ID)")
     parser.add_argument("--title", default="Semera / Logiya larval habitat sites")
     args = parser.parse_args(argv)
 
     import geopandas as gpd
+    import pandas as pd
     import pyogrio
 
     layer = args.layer or pyogrio.list_layers(args.gpkg)[0][0]
@@ -364,10 +423,27 @@ def main(argv=None):
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
     if gdf.crs and gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(4326)
-    if args.sort in gdf.columns:
-        gdf = gdf.sort_values(args.sort, kind="stable")
+    sort_column = args.sort or find_field(list(gdf.columns), "habitat_id")
+    if sort_column and sort_column in gdf.columns:
+        gdf = gdf.sort_values(sort_column, kind="stable")
     gdf = gdf.reset_index(drop=True)
     print(f"{len(gdf)} sites from layer {layer!r}")
+
+    catalogue = None
+    if args.catalogue:
+        candidate = Path(args.catalogue)
+    else:
+        candidate = Path(args.gpkg).parent / "field_catalogue.csv"
+    if candidate.is_file():
+        catalogue = pd.read_csv(candidate)
+
+    photo_columns = discover_photo_columns(list(gdf.columns), catalogue)
+    if not photo_columns:
+        raise SystemExit(
+            "no photo columns found. The table needs the <question>_file / "
+            "<question>_url pairs the notebook writes; re-run the notebook first."
+        )
+    print("photo questions: " + ", ".join(label for label, _ in photo_columns))
 
     patches, patch_px, resolution = extract_patches(
         args.raster, gdf.geometry.x, gdf.geometry.y, args.patch_metres)
@@ -446,7 +522,8 @@ def main(argv=None):
         def patch_src(i):
             return patch_data_uri(patches[i])
 
-    page = build_html(gdf, patch_src, args.patch_metres, patch_px, photo_src, args.title)
+    page = build_html(gdf, patch_src, args.patch_metres, patch_px, photo_src,
+                      args.title, photo_columns)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page, encoding="utf-8")

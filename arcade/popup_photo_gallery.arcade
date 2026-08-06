@@ -1,62 +1,61 @@
 // ---------------------------------------------------------------------------
 // Popup photo gallery - Semera / Logiya larval habitat layer
 //
-// Shows every published photo for the clicked site, with a heading per view,
-// and silently skips any photo that has not been published yet so the popup
-// never renders a broken image.
+// Shows every published photo for the clicked site, and skips any photo that has
+// not been published yet so the popup never renders a broken image.
+//
+// NO FIELD NAME IS HARDCODED. Epicollect5 builds column names from question
+// ORDER, so adding or reordering a question renames every column after it. On
+// 2026-08-06 two questions were renamed and two were swapped: "9_South" became
+// "9_East" and "10_East" became "10_South". Anything pinned to a literal name
+// would have shown the wrong label, or nothing at all. This expression instead
+// finds every field ending in "_url" and derives its label from the field name,
+// so the popup keeps working across form edits.
 //
 // HOW TO USE
-//   1. Open the hosted feature layer item -> Visualization -> Configure pop-ups
+//   1. Hosted feature layer item -> Visualization -> Configure pop-ups
 //   2. Add content -> **Arcade**            <- not "Text"
 //   3. Paste this whole file, name it "photoGallery", click Done
 //
 //   This returns a pop-up ELEMENT ({ "type": "text", "text": ... }), which is what
-//   the Arcade content element expects. A Text element is different: it wants a
-//   plain string and you reference it as {expression/expr0}. If you use a Text
-//   element with this file you will see "[object Object]" instead of the photos.
-//
-// The layer must have the *_url fields written by download_epicollect5.ipynb.
-// Fields are looked up through Schema() rather than named directly, so a field
-// missing from the published layer is reported instead of throwing
-// "Execution error - Key not found". Run list_fields.arcade to see the real names.
+//   the Arcade content element expects. A Text element wants a plain string and
+//   would show "[object Object]".
 // ---------------------------------------------------------------------------
 
-var wanted = [
-    { "label": "Surrounding",          "field": "f_6_Surrounding_url" },
-    { "label": "Down (entire water)",  "field": "f_7_Down_entire_water_url" },
-    { "label": "North",                "field": "f_8_North_url" },
-    { "label": "South",                "field": "f_9_South_url" },
-    { "label": "East",                 "field": "f_10_East_url" },
-    { "label": "West",                 "field": "f_11_West_url" }
-];
-
-// Map lower-cased field name -> the layer's actual spelling, so the expression
-// survives any case change applied when the layer was published.
-var available = {};
+// Collect every "<question>_url" field the layer has, in field order.
+var urlFields = [];
 for (var i in Schema($feature).fields) {
     var fieldName = Schema($feature).fields[i].name;
-    available[Lower(fieldName)] = fieldName;
+    if (Right(Lower(fieldName), 4) == "_url") {
+        urlFields[Count(urlFields)] = fieldName;
+    }
+}
+
+// "f_10_South_url" -> "South";  "f_7_Down_close_up_wate_url" -> "Down close up wate"
+function prettify(fieldName) {
+    var stem = Left(fieldName, Count(fieldName) - 4);   // drop "_url"
+    var parts = Split(stem, "_");
+    var words = [];
+    for (var k in parts) {
+        var part = parts[k];
+        // Skip the leading "f" and the question number that Epicollect5 prefixes.
+        if (part == "" || part == "f") { continue; }
+        if (Count(words) == 0 && IsEmpty(Number(part)) == false) { continue; }
+        words[Count(words)] = part;
+    }
+    if (Count(words) == 0) { return stem; }
+    return Concatenate(words, " ");
 }
 
 var html = "";
 var shown = 0;
-var missing = "";
 
-for (var j in wanted) {
-    var key = Lower(wanted[j]["field"]);
-
-    if (!HasKey(available, key)) {
-        missing += wanted[j]["field"] + " ";
-        continue;
-    }
-
-    var url = Attribute($feature, available[key]);
+for (var j in urlFields) {
+    var url = Attribute($feature, urlFields[j]);
     if (IsEmpty(url)) { continue; }
 
     html += "<p style='margin:0 0 12px 0;'>";
-    html += "<b>" + wanted[j]["label"] + "</b><br />";
-    // A plain <img> is all ArcGIS Online allows; wrapping it in <a> lets the
-    // viewer open the full-size photo in a new tab.
+    html += "<b>" + prettify(urlFields[j]) + "</b><br />";
     html += "<a href='" + url + "' target='_blank'>";
     html += "<img src='" + url + "' style='width:100%; max-width:420px; border-radius:4px;' />";
     html += "</a></p>";
@@ -64,19 +63,16 @@ for (var j in wanted) {
 }
 
 if (shown == 0) {
-    if (missing != "") {
-        // A configuration problem, not a data problem, so say which fields.
-        html = "<p><i>Photo fields are not in this layer: " + missing +
-               "<br />Re-publish from a GeoPackage that already has photo URLs.</i></p>";
+    if (Count(urlFields) == 0) {
+        // A configuration problem, not a data problem, so say which it is.
+        html = "<p><i>This layer has no photo URL fields. Re-publish it from a "
+             + "GeoPackage produced by download_epicollect5.ipynb.</i></p>";
     } else {
         html = "<p><i>No photos published for this site yet.</i></p>";
     }
 }
 
-// Console() prints to the expression editor's console while you are testing; it
-// has no effect on the published pop-up.
+// Console() prints to the expression editor while testing; no effect once published.
 Console(html);
 
-// Return a pop-up element rather than a bare string, so the embedded CSS is
-// preserved and the Arcade content element renders it as HTML.
 return { "type": "text", "text": html };

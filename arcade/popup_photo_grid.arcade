@@ -12,55 +12,57 @@
 //
 // HOW TO USE
 //   Configure pop-ups -> Add content -> **Arcade**   (not "Text")
+//   No field name is hardcoded, so this survives Epicollect5 form edits.
 //   Paste, name it "photoGrid", click Done.
 //   This returns a pop-up ELEMENT, which is what the Arcade content element
 //   expects. A Text element wants a plain string instead and would show
 //   "[object Object]".
 // ---------------------------------------------------------------------------
 
-var wanted = [
-    ["Surrounding",         "f_6_Surrounding_url"],
-    ["Down (entire water)", "f_7_Down_entire_water_url"],
-    ["North",               "f_8_North_url"],
-    ["South",               "f_9_South_url"],
-    ["East",                "f_10_East_url"],
-    ["West",                "f_11_West_url"]
-];
-
-// Look fields up rather than naming them directly, so a field missing from the
-// hosted layer reports itself instead of throwing "Key not found".
-var available = {};
+// No field name is hardcoded: Epicollect5 renames columns whenever questions are
+// reordered (on 2026-08-06 "9_South" became "9_East"), so the photo fields are
+// discovered from the layer and labelled from the field name.
+var urlFields = [];
 for (var i in Schema($feature).fields) {
     var fieldName = Schema($feature).fields[i].name;
-    available[Lower(fieldName)] = fieldName;
+    if (Right(Lower(fieldName), 4) == "_url") {
+        urlFields[Count(urlFields)] = fieldName;
+    }
+}
+
+function prettify(fieldName) {
+    var stem = Left(fieldName, Count(fieldName) - 4);
+    var parts = Split(stem, "_");
+    var words = [];
+    for (var k in parts) {
+        var part = parts[k];
+        if (part == "" || part == "f") { continue; }
+        if (Count(words) == 0 && IsEmpty(Number(part)) == false) { continue; }
+        words[Count(words)] = part;
+    }
+    if (Count(words) == 0) { return stem; }
+    return Concatenate(words, " ");
 }
 
 var cells = [];
-var missing = "";
-
-for (var j in wanted) {
-    var key = Lower(wanted[j][1]);
-    if (!HasKey(available, key)) {
-        missing += wanted[j][1] + " ";
-        continue;
-    }
-    var url = Attribute($feature, available[key]);
+for (var j in urlFields) {
+    var url = Attribute($feature, urlFields[j]);
     if (IsEmpty(url)) { continue; }
 
     var cell = "<td style='width:50%; padding:3px; vertical-align:top;'>" +
                "<a href='" + url + "' target='_blank'>" +
                "<img src='" + url + "' style='width:100%; border-radius:3px;' />" +
                "</a>" +
-               "<div style='font-size:11px; text-align:center;'>" + wanted[j][0] +
+               "<div style='font-size:11px; text-align:center;'>" + prettify(urlFields[j]) +
                "</div></td>";
     cells[Count(cells)] = cell;
 }
 
 if (Count(cells) == 0) {
     var empty = "<p><i>No photos for this site yet.</i></p>";
-    if (missing != "") {
-        empty = "<p><i>Photo fields missing from this layer: " + missing +
-                "<br />Re-publish from a GeoPackage that already has photo URLs.</i></p>";
+    if (Count(urlFields) == 0) {
+        empty = "<p><i>This layer has no photo URL fields. Re-publish it from a "
+              + "GeoPackage produced by download_epicollect5.ipynb.</i></p>";
     }
     Console(empty);
     return { "type": "text", "text": empty };
