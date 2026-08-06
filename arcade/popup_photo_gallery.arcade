@@ -22,6 +22,13 @@
 //   would show "[object Object]".
 // ---------------------------------------------------------------------------
 
+// REQUIRED. This expression finds its fields dynamically, via Schema(), so the
+// client cannot tell in advance which attributes the popup needs. Without
+// Expects() those attributes are never requested and every value reads as empty,
+// which shows up as "No photos" on every single site. The wildcard asks for all
+// fields; that is fine for a popup, which already fetches the whole feature.
+Expects($feature, "*")
+
 // Collect every "<question>_url" field the layer has, in field order.
 var urlFields = [];
 for (var i in Schema($feature).fields) {
