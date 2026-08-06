@@ -20,12 +20,6 @@ permissions:
   pages: write
   id-token: write
 
-# Let a running deploy finish rather than cancelling it, so a half-published site
-# is never left behind.
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   deploy:
     environment:
