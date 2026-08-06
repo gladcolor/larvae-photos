@@ -19,6 +19,17 @@
 //   "[object Object]".
 // ---------------------------------------------------------------------------
 
+// TWO POP-UP PROFILE FACTS THIS FILE DEPENDS ON, both learned the hard way:
+//
+//   1. Expects($feature, "*") is REQUIRED. Fields are discovered at run time via
+//      Schema(), so the client cannot know which attributes to request, does not
+//      request them, and every value reads as empty. Symptom: "No photos" on
+//      every single site.
+//
+//   2. Fields are read with $feature[name], NOT Attribute($feature, name).
+//      Attribute() does not exist in the pop-up profile and fails to compile with
+//      "Function not found".
+//
 // No field name is hardcoded: Epicollect5 renames columns whenever questions are
 // reordered (on 2026-08-06 "9_South" became "9_East"), so the photo fields are
 // discovered from the layer and labelled from the field name.
@@ -60,7 +71,7 @@ function prettify(fieldName) {
 
 var cells = [];
 for (var j in urlFields) {
-    var url = Attribute($feature, urlFields[j]);
+    var url = $feature[urlFields[j]];
     if (IsEmpty(url)) { continue; }
 
     var cell = "<td style='width:50%; padding:3px; vertical-align:top;'>" +

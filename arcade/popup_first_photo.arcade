@@ -29,7 +29,7 @@ Expects($feature, "*")
 for (var i in Schema($feature).fields) {
     var fieldName = Schema($feature).fields[i].name;
     if (Right(Lower(fieldName), 4) == "_url") {
-        var url = Attribute($feature, fieldName);
+        var url = $feature[fieldName];
         if (!IsEmpty(url)) {
             return url;
         }

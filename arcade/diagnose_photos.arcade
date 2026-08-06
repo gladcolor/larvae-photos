@@ -1,43 +1,30 @@
 // ---------------------------------------------------------------------------
 // DIAGNOSTIC: why does the popup say "No photos for this site yet"?
 //
-// Run this on a feature you KNOW has photos. It reports, in order:
-//   1. how many "_url" fields the layer has
-//   2. each field's name
-//   3. the value read with Attribute()      <- the supported dynamic accessor
-//   4. the value read with $feature[var]    <- what the Arcade Assistant rewrote it to
+// Run this on a site you KNOW has photos, then delete the expression.
 //
-// Read the result like this:
+// Reading the result:
 //
 //   "url fields: 0"
-//       The layer has no photo URL fields at all. It was published from an old
-//       GeoPackage, from before the URL columns were populated, and ArcGIS Online
+//       The layer has no photo URL fields. It was published from an old
+//       GeoPackage, before the URL columns were populated, and ArcGIS Online
 //       drops columns that are entirely null. Re-publish from the current
 //       GeoPackage (output/epicollect5_test.gpkg).
 //
-//   Fields listed, but every Attribute() value is "(empty)"
-//       The fields exist but the rows are empty. Same cause: stale layer, published
-//       before the URLs were filled in. Re-publish.
+//   Fields listed, every value "(empty)"
+//       Either the layer is stale, or Expects() is missing from the expression
+//       you are debugging. Without Expects(), dynamically discovered attributes
+//       are never requested and every value reads as empty.
 //
-//   Attribute() shows a URL but $feature[var] shows "(empty)"
-//       The layer and data are fine. Dynamic bracket access is not working in this
-//       Arcade version, so change the popup expression back to
-//           var url = Attribute($feature, urlFields[j]);
+//   Fields listed with URLs
+//       Data and access are both fine. The site you tested simply has blank
+//       photo questions, which is normal: about 120 of 2370 cells are blank.
 //
-//   Both show a URL
-//       The data and the expression are both fine; the problem is elsewhere, most
-//       likely that you tested a site whose photo questions were left blank.
-//
-// HOW TO USE
-//   Configure pop-ups -> Add content -> Arcade -> paste -> Done.
-//   Delete the expression once you have the answer.
+// NOTE ON ACCESSORS: fields are read with $feature[name]. Attribute($feature,
+// name) does NOT exist in the pop-up profile and fails to compile with
+// "Function not found".
 // ---------------------------------------------------------------------------
 
-// REQUIRED. This expression finds its fields dynamically, via Schema(), so the
-// client cannot tell in advance which attributes the popup needs. Without
-// Expects() those attributes are never requested and every value reads as empty,
-// which shows up as "No photos" on every single site. The wildcard asks for all
-// fields; that is fine for a popup, which already fetches the whole feature.
 Expects($feature, "*")
 
 var urlFields = [];
@@ -52,7 +39,6 @@ var report = "url fields: " + Count(urlFields) + "<br />";
 report += "total fields in layer: " + Count(Schema($feature).fields) + "<br /><br />";
 
 if (Count(urlFields) == 0) {
-    // Nothing matched, so list every field to show what the layer really has.
     report += "<b>No field ends in _url. The layer has:</b><br />";
     for (var n in Schema($feature).fields) {
         report += Schema($feature).fields[n].name + "<br />";
@@ -62,16 +48,9 @@ if (Count(urlFields) == 0) {
 
 for (var j in urlFields) {
     var name = urlFields[j];
-
-    var viaAttribute = Attribute($feature, name);
-    var viaBracket = $feature[name];
-
-    report += "<b>" + name + "</b><br />";
-    report += "&nbsp;&nbsp;Attribute() : "
-            + IIf(IsEmpty(viaAttribute), "(empty)", Left(viaAttribute, 60)) + "<br />";
-    report += "&nbsp;&nbsp;$feature[]  : "
-            + IIf(IsEmpty(viaBracket), "(empty)", Left(viaBracket, 60)) + "<br /><br />";
+    var value = $feature[name];
+    report += "<b>" + name + "</b><br />&nbsp;&nbsp;"
+            + IIf(IsEmpty(value), "(empty)", Left(value, 60)) + "<br /><br />";
 }
 
-Console(report);
 return { "type": "text", "text": report };

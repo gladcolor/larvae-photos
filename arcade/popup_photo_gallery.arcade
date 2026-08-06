@@ -64,7 +64,7 @@ var html = "";
 var shown = 0;
 
 for (var j in urlFields) {
-    var url = Attribute($feature, urlFields[j]);
+    var url = $feature[urlFields[j]];
     if (IsEmpty(url)) { continue; }
 
     html += "<p style='margin:0 0 12px 0;'>";
