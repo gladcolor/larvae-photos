@@ -8,7 +8,12 @@ Steps, in order, because each depends on the one before:
   1. notebook   download new entries and photos, blur faces, push photos,
                 write CSV / Excel / GeoPackage
   2. patches    cut satellite patches and rebuild the HTML contact sheet
-  3. publish    commit and push index.html and patches/ to GitHub Pages
+  3. publish    commit and push docs/ to GitHub Pages
+
+The site lives in docs/ and holds only the page and the satellite patches. The
+photos are NOT part of the published site: at 2200+ files and 400+ MB they made the
+Pages build fail outright, so the page links them on raw.githubusercontent.com
+instead, from the same repository.
 
 Every step is skippable, so a failure part way through can be resumed rather than
 restarted:
@@ -98,6 +103,10 @@ def run_notebook():
     return True
 
 
+PHOTO_URL_BASE = ("https://raw.githubusercontent.com/gladcolor/larvae-photos/"
+                  "main/photos/")
+
+
 def build_contact_sheet(patch_metres, cross_alpha, label_alpha):
     gpkg = GPKG if GPKG.exists() else OUT_DIR / "epicollect5_test.gpkg"
     if not gpkg.exists():
@@ -110,17 +119,19 @@ def build_contact_sheet(patch_metres, cross_alpha, label_alpha):
     done = run([sys.executable, str(HERE / "make_contact_sheet.py"),
                 "--gpkg", str(gpkg),
                 "--raster", RASTER,
-                "--photo-url-base", "photos/",
-                "--patch-dir", str(HERE / "patches"),
+                "--photo-url-base", PHOTO_URL_BASE,
+                "--photo-root", str(HERE / "photos"),
+                "--patch-dir", str(HERE / "docs" / "patches"),
+                "--patch-url-base", "patches/",
                 "--patch-metres", str(patch_metres),
                 "--cross-alpha", str(cross_alpha),
                 "--label-alpha", str(label_alpha),
-                "--out", str(HERE / "index.html")])
+                "--out", str(HERE / "docs" / "index.html")])
     if done.returncode != 0:
         return False
     for line in done.stdout.strip().splitlines()[-3:]:
         log(f"  {line}")
-    add_banner(HERE / "index.html")
+    add_banner(HERE / "docs" / "index.html")
     return True
 
 
