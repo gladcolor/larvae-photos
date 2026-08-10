@@ -97,10 +97,19 @@ class FaceBlurrer:
                       sample of this dataset, enabling it together with
                       score_threshold=0.30 found faces in 27 of 56 images versus
                       9 with the defaults.
-    margin_frac     : grow each detected box by this fraction per side, so hair
-                      and chin are covered too
+    tile_scale      : also scan four overlapping crops at this fraction of the
+                      resized image. This magnifies small, distant faces that a
+                      single full-frame pass misses; set to 0 to disable
+    tile_score_threshold : require stronger evidence for crop-only detections,
+                      which limits the extra false positives created by tiling
+    margin_frac     : grow each detected box by this fraction per side, so hair,
+                      ears, and chin are covered too
     kernel_frac     : Gaussian kernel as a fraction of the smaller box side, so
                       the blur scales with face size instead of being fixed
+    blur_passes     : repeat the Gaussian blur so facial detail cannot be
+                      reconstructed from a weak single pass
+    feather_frac    : soften the outside of the expanded blur mask to avoid a
+                      conspicuous hard-edged rectangle
     pixelate        : mosaic instead of Gaussian blur
     """
 
@@ -110,8 +119,12 @@ class FaceBlurrer:
     top_k: int = 5000
     input_long_side: int = 2048
     allow_upscale: bool = True
-    margin_frac: float = 0.25
-    kernel_frac: float = 0.30
+    tile_scale: float = 0.62
+    tile_score_threshold: float = 0.45
+    margin_frac: float = 0.40
+    kernel_frac: float = 0.65
+    blur_passes: int = 2
+    feather_frac: float = 0.08
     pixelate: bool = False
     pixelate_blocks: int = 12
     jpeg_quality: int = 92
@@ -128,8 +141,49 @@ class FaceBlurrer:
             top_k=self.top_k,
         )
 
+    def _detect_frame(self, frame):
+        """Run YuNet once and return its raw rows for one frame or crop."""
+        fh, fw = frame.shape[:2]
+        self._detector.setInputSize((fw, fh))
+        _, faces = self._detector.detect(frame)
+        return [] if faces is None else faces
+
+    def _merge_detections(self, candidates):
+        """Greedy NMS across full-frame and overlapping-tile detections."""
+        if not candidates:
+            return []
+        boxes = np.asarray([c[:4] for c in candidates], dtype=np.float64)
+        scores = np.asarray([c[4] for c in candidates], dtype=np.float64)
+        x0, y0 = boxes[:, 0], boxes[:, 1]
+        x1, y1 = x0 + boxes[:, 2], y0 + boxes[:, 3]
+        areas = np.maximum(0.0, boxes[:, 2]) * np.maximum(0.0, boxes[:, 3])
+        order = scores.argsort()[::-1]
+        keep = []
+        while order.size:
+            i = int(order[0])
+            keep.append(i)
+            if order.size == 1:
+                break
+            rest = order[1:]
+            ix0 = np.maximum(x0[i], x0[rest])
+            iy0 = np.maximum(y0[i], y0[rest])
+            ix1 = np.minimum(x1[i], x1[rest])
+            iy1 = np.minimum(y1[i], y1[rest])
+            intersection = np.maximum(0.0, ix1 - ix0) * np.maximum(0.0, iy1 - iy0)
+            union = areas[i] + areas[rest] - intersection
+            iou = np.divide(
+                intersection, union, out=np.zeros_like(intersection), where=union > 0
+            )
+            order = rest[iou <= self.nms_threshold]
+        return [candidates[i] for i in keep]
+
     def detect(self, img_bgr):
-        """Return [(x, y, w, h, score), ...] in the ORIGINAL image's pixel coords."""
+        """Return [(x, y, w, h, score), ...] in original-image coordinates.
+
+        YuNet first sees the whole resized image, then four overlapping crops.
+        The crop pass makes small field-worker faces larger relative to the
+        detector input; cross-pass non-maximum suppression removes duplicates.
+        """
         h, w = img_bgr.shape[:2]
         long_side = max(h, w)
         if long_side > self.input_long_side or self.allow_upscale:
@@ -143,13 +197,51 @@ class FaceBlurrer:
         else:
             img_in = img_bgr
         ih, iw = img_in.shape[:2]
-        self._detector.setInputSize((iw, ih))
-        _, faces = self._detector.detect(img_in)
-        if faces is None:
-            return []
+        candidates = []
+
+        def add_candidate(face, x_offset=0, y_offset=0, minimum_score=None):
+            score = float(face[-1])
+            if minimum_score is not None and score < minimum_score:
+                return
+            x0 = max(0.0, float(face[0]) + x_offset)
+            y0 = max(0.0, float(face[1]) + y_offset)
+            x1 = min(float(iw), float(face[0] + face[2]) + x_offset)
+            y1 = min(float(ih), float(face[1] + face[3]) + y_offset)
+            if x1 <= x0 or y1 <= y0:
+                return
+
+            # YuNet's low-threshold mode occasionally calls a large pit or body
+            # a face. Real large/close faces normally receive much stronger
+            # scores, so make the confidence requirement scale with box area.
+            relative_area = (x1 - x0) * (y1 - y0) / float(iw * ih)
+            if relative_area >= 0.04 and score < 0.65:
+                return
+            if relative_area >= 0.01 and score < 0.50:
+                return
+            candidates.append((x0, y0, x1 - x0, y1 - y0, score))
+
+        for f in self._detect_frame(img_in):
+            add_candidate(f)
+
+        if 0 < self.tile_scale < 0.95 and min(ih, iw) >= 480:
+            tile_w = max(320, min(iw, int(round(iw * self.tile_scale))))
+            tile_h = max(320, min(ih, int(round(ih * self.tile_scale))))
+            x_starts = sorted({0, max(0, iw - tile_w)})
+            y_starts = sorted({0, max(0, ih - tile_h)})
+            for y_start in y_starts:
+                for x_start in x_starts:
+                    tile = img_in[y_start:y_start + tile_h,
+                                  x_start:x_start + tile_w]
+                    for f in self._detect_frame(tile):
+                        add_candidate(
+                            f, x_start, y_start,
+                            max(self.score_threshold, self.tile_score_threshold),
+                        )
+
+        faces = self._merge_detections(candidates)
         inv = 1.0 / scale
-        return [(float(f[0]) * inv, float(f[1]) * inv,
-                 float(f[2]) * inv, float(f[3]) * inv, float(f[-1])) for f in faces]
+        return [(f[0] * inv, f[1] * inv, f[2] * inv, f[3] * inv, f[4])
+                for f in faces]
 
     def blur_region(self, img, x, y, w, h):
         """Blur one box in place, expanded by margin_frac and clipped to the image."""
@@ -166,10 +258,32 @@ class FaceBlurrer:
             small = cv2.resize(roi, (blocks, blocks), interpolation=cv2.INTER_LINEAR)
             roi[:] = cv2.resize(small, (rw, rh), interpolation=cv2.INTER_NEAREST)
         else:
-            k = int(max(11, self.kernel_frac * min(roi.shape[:2])))
+            limit = min(roi.shape[:2])
+            k = int(max(7, self.kernel_frac * limit))
             if k % 2 == 0:
                 k += 1
-            img[y0:y1, x0:x1] = cv2.GaussianBlur(roi, (k, k), 0)
+            if k > limit:
+                k = limit if limit % 2 == 1 else limit - 1
+            if k < 3:
+                return
+            blurred = roi.copy()
+            for _ in range(max(1, self.blur_passes)):
+                blurred = cv2.GaussianBlur(blurred, (k, k), 0)
+            rh, rw = roi.shape[:2]
+            mask = np.zeros((rh, rw), dtype=np.uint8)
+            cv2.ellipse(
+                mask, (rw // 2, rh // 2),
+                (max(1, rw // 2 - 1), max(1, rh // 2 - 1)),
+                0, 0, 360, 255, -1,
+            )
+            feather = int(max(3, self.feather_frac * min(rh, rw)))
+            if feather % 2 == 0:
+                feather += 1
+            mask = cv2.GaussianBlur(mask, (feather, feather), 0)
+            alpha = mask.astype(np.float32)[..., None] / 255.0
+            img[y0:y1, x0:x1] = np.clip(
+                alpha * blurred + (1.0 - alpha) * roi, 0, 255
+            ).astype(np.uint8)
 
     def process_image(self, img_bgr):
         """Return (blurred copy, detected faces)."""
@@ -265,8 +379,20 @@ def main(argv=None):
     parser.add_argument("--no-upscale", action="store_true",
                         help="do not enlarge images smaller than --long-side "
                              "(faster, but misses small faces in 1024x768 photos)")
-    parser.add_argument("--margin", type=float, default=0.25,
-                        help="expand each face box by this fraction (default 0.25)")
+    parser.add_argument("--margin", type=float, default=0.40,
+                        help="expand each face box by this fraction (default 0.40)")
+    parser.add_argument("--no-tiles", action="store_true",
+                        help="disable overlapping crop detection (faster, less recall)")
+    parser.add_argument("--tile-scale", type=float, default=0.62,
+                        help="crop size relative to the frame (default 0.62)")
+    parser.add_argument("--tile-score", type=float, default=0.45,
+                        help="minimum score for crop-only detections (default 0.45)")
+    parser.add_argument("--kernel-frac", type=float, default=0.65,
+                        help="Gaussian kernel relative to blurred region (default 0.65)")
+    parser.add_argument("--blur-passes", type=int, default=2,
+                        help="number of Gaussian blur passes (default 2)")
+    parser.add_argument("--feather-frac", type=float, default=0.08,
+                        help="soft-edge width relative to the region (default 0.08)")
     parser.add_argument("--pixelate", action="store_true",
                         help="mosaic instead of Gaussian blur")
     args = parser.parse_args(argv)
@@ -274,7 +400,13 @@ def main(argv=None):
     blurrer = FaceBlurrer(model_path=args.model, score_threshold=args.score,
                           input_long_side=args.long_side,
                           allow_upscale=not args.no_upscale,
-                          margin_frac=args.margin, pixelate=args.pixelate)
+                          tile_scale=0.0 if args.no_tiles else args.tile_scale,
+                          tile_score_threshold=args.tile_score,
+                          margin_frac=args.margin,
+                          kernel_frac=args.kernel_frac,
+                          blur_passes=args.blur_passes,
+                          feather_frac=args.feather_frac,
+                          pixelate=args.pixelate)
     result = blurrer.blur_folder(args.src, args.out, overwrite=args.overwrite,
                                  report_csv=args.report)
     print(f"\n{result['processed']} processed, {result['skipped']} already done, "

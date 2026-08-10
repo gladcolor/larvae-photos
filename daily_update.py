@@ -52,6 +52,12 @@ RASTER = (r"D:\OneDrive_Emory\OneDrive - Emory\EC-ENV Next Gen LSM Ethiopia - Ge
           r"\Ethiopia Delivery (Processed Satellite Imagery)"
           r"\Logiya Imagery 2026-Processed Imagery\Semera_Logiya_20260718_8bit.tif")
 
+DETECTION_LAYER = (
+    r"D:\OneDrive_Emory\OneDrive - Emory\EC-ENV Next Gen LSM Ethiopia - General"
+    r"\Data_develop_sermera_logiya_image_20260718"
+    r"\Semera_Logiya_20260718_slipt_60m_detection_v2_dissolved.shp"
+)
+
 STEPS = ("notebook", "patches", "publish")
 
 
@@ -125,6 +131,8 @@ def build_contact_sheet(patch_metres, cross_alpha, label_alpha):
                 "--raster", RASTER,
                 "--photo-url-base", PHOTO_URL_BASE,
                 "--photo-root", str(HERE / "photos"),
+                "--detection-layer", DETECTION_LAYER,
+                "--exclude-id-prefix", "X", "Y",
                 "--patch-dir", str(HERE / "docs" / "patches"),
                 "--patch-url-base", "patches/",
                 "--patch-metres", str(patch_metres),

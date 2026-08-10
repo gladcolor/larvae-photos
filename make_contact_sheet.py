@@ -48,9 +48,15 @@ import numpy as np
 # move. First match wins.
 INFO_SUFFIXES = [
     ("Habitat ID", "habitat_id"),
-    ("Type", "habitat_type"),
+    ("Field-observed habitat", "habitat_type"),
     ("An. stephensi", "number_of_an_steph"),
     ("GPS acc (m)", "enter_gps_accuracy"),
+]
+
+COMPARISON_FIELDS = [
+    ("Field-observed habitat", "field_observed_habitat"),
+    ("Imagery-detected habitat", "imagery_detected_habitat"),
+    ("Comparison", "detection_field_comparison"),
 ]
 
 
@@ -86,6 +92,97 @@ def find_field(columns, suffix):
         if name == suffix or name.endswith("_" + suffix):
             return column
     return None
+
+
+def normalize_site_id(value):
+    """Return a stable ID key for joins (for example, ``885.0`` -> ``885``)."""
+    if value is None:
+        return ""
+    text = str(value).strip().upper()
+    if text in ("", "NAN", "<NA>", "NONE"):
+        return ""
+    return re.sub(r"^([+-]?\d+)\.0+$", r"\1", text)
+
+
+def display_habitat(value):
+    """Use one readable vocabulary for field and imagery habitat labels."""
+    if value is None:
+        return None
+    text = re.sub(r"\s+", " ", str(value).strip().lower().replace("_", " "))
+    if text in ("", "nan", "<na>", "none"):
+        return None
+    mapping = {
+        "birka - dry": "Birka - dry",
+        "birka-dry": "Birka - dry",
+        "birka - water": "Birka - with water",
+        "birka-water": "Birka - with water",
+        "birka - with water": "Birka - with water",
+        "construction pit": "Construction pit",
+        "not a habitat": "Not a habitat",
+    }
+    return mapping.get(text, str(value).strip() or None)
+
+
+def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
+                             detection_type_field="class_name",
+                             exclude_prefixes=("X", "Y")):
+    """ID-join imagery detections to field observations and add display fields.
+
+    ``Not a habitat`` is a field rejection of an imagery detection, not a fourth
+    detector output class, so it receives its own comparison label.
+    """
+    import geopandas as gpd
+
+    id_field = find_field(list(gdf.columns), "habitat_id")
+    field_type = find_field(list(gdf.columns), "habitat_type")
+    if not id_field or not field_type:
+        raise ValueError("survey layer needs habitat ID and habitat type fields")
+
+    joined = gdf.copy()
+    joined["_comparison_id"] = joined[id_field].map(normalize_site_id)
+    prefixes = tuple(str(p).strip().upper() for p in exclude_prefixes if str(p).strip())
+    if prefixes:
+        is_new = joined["_comparison_id"].str.startswith(prefixes, na=False)
+        print(f"excluded {int(is_new.sum())} new-site row(s) with ID prefix "
+              f"{', '.join(prefixes)}")
+        joined = joined.loc[~is_new].copy()
+
+    detections = gpd.read_file(detection_path, ignore_geometry=True)
+    missing = [name for name in (detection_id_field, detection_type_field)
+               if name not in detections.columns]
+    if missing:
+        raise ValueError(f"detection layer is missing field(s): {', '.join(missing)}")
+    detections = detections[[detection_id_field, detection_type_field]].copy()
+    detections["_comparison_id"] = detections[detection_id_field].map(normalize_site_id)
+    detections = detections[detections["_comparison_id"].ne("")]
+    duplicates = detections["_comparison_id"].duplicated(keep=False)
+    if duplicates.any():
+        examples = ", ".join(detections.loc[duplicates, "_comparison_id"].head(5))
+        raise ValueError(f"detection IDs are not unique; examples: {examples}")
+
+    detected_by_id = detections.set_index("_comparison_id")[detection_type_field]
+    joined["field_observed_habitat"] = joined[field_type].map(display_habitat)
+    joined["imagery_detected_habitat"] = (
+        joined["_comparison_id"].map(detected_by_id).map(display_habitat)
+    )
+
+    def comparison(row):
+        observed = row["field_observed_habitat"]
+        detected = row["imagery_detected_habitat"]
+        if detected is None or str(detected) in ("", "nan", "<NA>"):
+            return "No detection ID match"
+        if observed == "Not a habitat":
+            return "Field-rejected detection"
+        return "Match" if observed == detected else "Mismatch"
+
+    joined["detection_field_comparison"] = joined.apply(comparison, axis=1)
+    matched = int(joined["imagery_detected_habitat"].notna().sum())
+    agreements = int(joined["detection_field_comparison"].eq("Match").sum())
+    rejected = int(joined["detection_field_comparison"].eq(
+        "Field-rejected detection").sum())
+    print(f"ID-joined {matched} of {len(joined)} numbered site(s): "
+          f"{agreements} category matches, {rejected} field-rejected detections")
+    return joined.drop(columns="_comparison_id")
 
 
 def discover_photo_columns(columns, catalogue=None):
@@ -319,8 +416,14 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
     id_field = find_field(columns, "habitat_id")
     type_field = find_field(columns, "habitat_type")
     count_field = find_field(columns, "number_of_an_steph")
-    info_fields = [(label, find_field(columns, suffix))
-                   for label, suffix in INFO_SUFFIXES[1:]]
+    if all(field in columns for _, field in COMPARISON_FIELDS):
+        info_fields = COMPARISON_FIELDS + [
+            (label, find_field(columns, suffix))
+            for label, suffix in INFO_SUFFIXES[2:]
+        ]
+    else:
+        info_fields = [(label, find_field(columns, suffix))
+                       for label, suffix in INFO_SUFFIXES[1:]]
     info_fields = [(label, field) for label, field in info_fields if field]
 
     rows = []
@@ -430,6 +533,16 @@ def main(argv=None):
                              "(default: beside the GeoPackage)")
     parser.add_argument("--sort", default=None,
                         help="column to sort rows by (default: the habitat ID)")
+    parser.add_argument("--detection-layer", default=None, metavar="FILE",
+                        help="imagery-detection vector layer to ID-join to the survey")
+    parser.add_argument("--detection-id-field", default="ID",
+                        help="ID field in --detection-layer (default: ID)")
+    parser.add_argument("--detection-type-field", default="class_name",
+                        help="habitat-class field in --detection-layer "
+                             "(default: class_name)")
+    parser.add_argument("--exclude-id-prefix", nargs="*", default=["X", "Y"],
+                        metavar="PREFIX", help="site ID prefixes excluded when the "
+                             "detection comparison is enabled (default: X Y)")
     parser.add_argument("--title", default="Semera / Logiya larval habitat sites")
     args = parser.parse_args(argv)
 
@@ -442,6 +555,14 @@ def main(argv=None):
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty]
     if gdf.crs and gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(4326)
+    if args.detection_layer:
+        gdf = add_detection_comparison(
+            gdf,
+            args.detection_layer,
+            detection_id_field=args.detection_id_field,
+            detection_type_field=args.detection_type_field,
+            exclude_prefixes=args.exclude_id_prefix,
+        )
     sort_column = args.sort or find_field(list(gdf.columns), "habitat_id")
     if sort_column and sort_column in gdf.columns:
         gdf = gdf.sort_values(sort_column, kind="stable")
