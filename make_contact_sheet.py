@@ -623,7 +623,9 @@ def main(argv=None):
         # a broken image. As the download catches up, the placeholders fill in.
         root = Path(args.photo_root) if args.photo_root else (
             Path(args.out).parent / args.photo_url_base.rstrip("/"))
-        available = ({p.name for p in root.iterdir() if p.is_file()}
+        image_suffixes = {".jpg", ".jpeg", ".png", ".webp"}
+        available = ({p.name for p in root.iterdir()
+                      if p.is_file() and p.suffix.lower() in image_suffixes}
                      if root.is_dir() else None)
         if available is None:
             print(f"note: {root} not found, linking every photo unchecked")
