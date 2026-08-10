@@ -188,7 +188,7 @@ def main(argv=None):
     parser.add_argument("--skip", nargs="*", default=[], choices=STEPS,
                         help="steps to skip")
     parser.add_argument("--patch-metres", type=float, default=100.0)
-    parser.add_argument("--cross-alpha", type=int, default=100)
+    parser.add_argument("--cross-alpha", type=int, default=65)
     parser.add_argument("--label-alpha", type=int, default=150)
     args = parser.parse_args(argv)
 

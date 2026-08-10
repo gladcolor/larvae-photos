@@ -56,6 +56,7 @@ INFO_SUFFIXES = [
 COMPARISON_FIELDS = [
     ("Field-observed habitat", "field_observed_habitat"),
     ("Imagery-detected habitat", "imagery_detected_habitat"),
+    ("Detection centroid", "detection_centroid_view_note"),
     ("Comparison", "detection_field_comparison"),
 ]
 
@@ -132,6 +133,7 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
     detector output class, so it receives its own comparison label.
     """
     import geopandas as gpd
+    import pandas as pd
 
     id_field = find_field(list(gdf.columns), "habitat_id")
     field_type = find_field(list(gdf.columns), "habitat_type")
@@ -147,12 +149,34 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
               f"{', '.join(prefixes)}; imagery comparison hidden for those rows")
     joined["_new_field_site"] = is_new
 
-    detections = gpd.read_file(detection_path, ignore_geometry=True)
+    detections = gpd.read_file(detection_path)
     missing = [name for name in (detection_id_field, detection_type_field)
                if name not in detections.columns]
     if missing:
         raise ValueError(f"detection layer is missing field(s): {', '.join(missing)}")
-    detections = detections[[detection_id_field, detection_type_field]].copy()
+    if detections.crs is None:
+        raise ValueError("detection layer has no CRS; cannot locate polygon centroids")
+    if detections.geometry.isna().any() or detections.geometry.is_empty.any():
+        raise ValueError("detection layer contains missing or empty geometries")
+
+    # Calculate centroids in a projected CRS, never directly in longitude/latitude.
+    # The current detection layer is UTM, while the fallback handles a future
+    # geographic layer without silently introducing a distorted centroid.
+    projected = detections
+    if detections.crs.is_geographic:
+        projected_crs = detections.estimate_utm_crs()
+        if projected_crs is None:
+            raise ValueError("could not choose a projected CRS for detection centroids")
+        projected = detections.to_crs(projected_crs)
+    centroid_wgs84 = gpd.GeoSeries(
+        projected.geometry.centroid, crs=projected.crs
+    ).to_crs("EPSG:4326")
+    detections["_centroid_longitude"] = centroid_wgs84.x.to_numpy()
+    detections["_centroid_latitude"] = centroid_wgs84.y.to_numpy()
+    detections = detections[[
+        detection_id_field, detection_type_field,
+        "_centroid_longitude", "_centroid_latitude",
+    ]].copy()
     detections["_comparison_id"] = detections[detection_id_field].map(normalize_site_id)
     detections = detections[detections["_comparison_id"].ne("")]
     duplicates = detections["_comparison_id"].duplicated(keep=False)
@@ -161,11 +185,45 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
         raise ValueError(f"detection IDs are not unique; examples: {examples}")
 
     detected_by_id = detections.set_index("_comparison_id")[detection_type_field]
+    centroid_lon_by_id = detections.set_index("_comparison_id")["_centroid_longitude"]
+    centroid_lat_by_id = detections.set_index("_comparison_id")["_centroid_latitude"]
     joined["field_observed_habitat"] = joined[field_type].map(display_habitat)
     joined["imagery_detected_habitat"] = (
         joined["_comparison_id"].map(detected_by_id).map(display_habitat)
     )
+    joined["detection_centroid_longitude"] = joined["_comparison_id"].map(
+        centroid_lon_by_id
+    )
+    joined["detection_centroid_latitude"] = joined["_comparison_id"].map(
+        centroid_lat_by_id
+    )
     joined.loc[joined["_new_field_site"], "imagery_detected_habitat"] = None
+    joined.loc[joined["_new_field_site"], [
+        "detection_centroid_longitude", "detection_centroid_latitude",
+    ]] = np.nan
+
+    # Retain the field coordinate as the patch centre. These offsets let the
+    # renderer place the cross at the detection centroid and clearly flag the
+    # few ID joins whose centroid lies outside the 100 m view.
+    centroid_points = gpd.GeoSeries(
+        gpd.points_from_xy(
+            joined["detection_centroid_longitude"],
+            joined["detection_centroid_latitude"],
+        ),
+        crs="EPSG:4326",
+        index=joined.index,
+    ).to_crs(projected.crs)
+    survey_points = joined.to_crs(projected.crs).geometry
+    dx = centroid_points.x - survey_points.x
+    dy = centroid_points.y - survey_points.y
+    joined["detection_centroid_offset_m"] = np.hypot(dx, dy)
+
+    compass = np.array(["N", "NE", "E", "SE", "S", "SW", "W", "NW"])
+    bearings = (np.degrees(np.arctan2(dx, dy)) + 360.0) % 360.0
+    direction_index = np.floor((bearings + 22.5) / 45.0).astype("Int64") % 8
+    joined["detection_centroid_direction"] = direction_index.map(
+        lambda value: None if pd.isna(value) else compass[int(value)]
+    )
 
     def comparison(row):
         observed = row["field_observed_habitat"]
@@ -243,7 +301,8 @@ def load_add_cross(explicit=None):
 
 
 def annotate_patch(array, add_cross, pixel_size_m, patch_metres, arm_metres,
-                   id_label=None, cross_alpha=150, label_alpha=150):
+                   id_label=None, cross_alpha=65, label_alpha=150,
+                   cross_xy=None, draw_cross=True):
     """Draw the red cross and ruler labels onto one patch.
 
     `cross_length` is the arm HALF-length in pixels, while `arm_label_m` is the
@@ -253,21 +312,69 @@ def annotate_patch(array, add_cross, pixel_size_m, patch_metres, arm_metres,
     readable without hiding the ground it sits on, which is the whole point of
     looking at the patch.
     """
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageFont
 
     image = Image.fromarray(array)
     half_px = int(round((arm_metres / 2.0) / pixel_size_m)) if arm_metres else 0
+    # Draw the fixed corner scale and optional ID with the shared helper. The
+    # movable cross is drawn below because the imagery-detection centroid need
+    # not be at the centre of the survey-coordinate patch.
     annotated = add_cross(
         image,
-        cross_length=half_px,
-        line_width=2 if half_px else 0,
-        transparency=cross_alpha,
+        cross_length=0,
+        line_width=0,
+        transparency=0,
         pixel_size_m=pixel_size_m,
-        arm_label_m=arm_metres,
+        arm_label_m=0,
         img_width_label_m=patch_metres,
         label_transparency=label_alpha,
         id_label=id_label,
     )
+
+    if draw_cross and half_px:
+        width, height = annotated.size
+        if cross_xy is None:
+            cx, cy = width // 2, height // 2
+        else:
+            cx, cy = int(round(cross_xy[0])), int(round(cross_xy[1]))
+        overlay = Image.new("RGBA", annotated.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        color = (255, 0, 0, int(np.clip(cross_alpha, 0, 255)))
+        draw.line([(cx, cy - half_px), (cx, cy + half_px)],
+                  fill=color, width=2)
+        draw.line([(cx - half_px, cy), (cx + half_px, cy)],
+                  fill=color, width=2)
+
+        font_size = max(14, min(28, width // 18))
+        font = None
+        for path in [
+            "arialbd.ttf", r"C:\Windows\Fonts\arialbd.ttf",
+            "arial.ttf", r"C:\Windows\Fonts\arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]:
+            try:
+                font = ImageFont.truetype(path, font_size)
+                break
+            except (IOError, OSError):
+                continue
+        if font is None:
+            font = ImageFont.load_default()
+
+        text_color = (255, 0, 0, int(np.clip(label_alpha, 0, 255)))
+        pad = 4
+        labels = [("0 m", cx - half_px, "left"),
+                  (f"{arm_metres:g} m", cx + half_px, "right")]
+        boxes = [draw.textbbox((0, 0), text, font=font) for text, _, _ in labels]
+        text_h = max(box[3] - box[1] for box in boxes)
+        label_y = max(pad, min(height - text_h - pad, cy - text_h - pad))
+        for (text, tip_x, side), box in zip(labels, boxes):
+            text_w = box[2] - box[0]
+            raw_x = tip_x - text_w - pad if side == "left" else tip_x + pad
+            label_x = max(pad, min(width - text_w - pad, raw_x))
+            draw.text((label_x, label_y), text, fill=text_color, font=font)
+        annotated = Image.alpha_composite(annotated.convert("RGBA"), overlay)
+
     return np.asarray(annotated.convert("RGB"))
 
 
@@ -291,7 +398,8 @@ def file_data_uri(path):
     return "data:image/jpeg;base64," + base64.b64encode(data).decode()
 
 
-def extract_patches(raster_path, lons, lats, metres):
+def extract_patches(raster_path, lons, lats, metres,
+                    cross_lons=None, cross_lats=None):
     """Cut a `metres` x `metres` ground patch centred on each point.
 
     The pixel size is derived from the raster's own resolution, so the patches
@@ -303,18 +411,44 @@ def extract_patches(raster_path, lons, lats, metres):
     from rasterio.warp import transform as warp_transform
     from rasterio.windows import Window
 
+    lons = list(lons)
+    lats = list(lats)
+    has_centroid = []
+    if cross_lons is None or cross_lats is None:
+        cross_lons, cross_lats = lons, lats
+        has_centroid = [False] * len(lons)
+    else:
+        clean_cross_lons = []
+        clean_cross_lats = []
+        for site_lon, site_lat, cross_lon, cross_lat in zip(
+                lons, lats, cross_lons, cross_lats):
+            valid = (cross_lon is not None and cross_lat is not None
+                     and np.isfinite(float(cross_lon))
+                     and np.isfinite(float(cross_lat)))
+            has_centroid.append(valid)
+            clean_cross_lons.append(cross_lon if valid else site_lon)
+            clean_cross_lats.append(cross_lat if valid else site_lat)
+        cross_lons, cross_lats = clean_cross_lons, clean_cross_lats
+
     patches = []
+    cross_pixels = []
     with rasterio.open(raster_path) as src:
         resolution = float(src.res[0])
         size = max(1, int(round(metres / resolution)))
-        xs, ys = warp_transform("EPSG:4326", src.crs, list(lons), list(lats))
+        xs, ys = warp_transform("EPSG:4326", src.crs, lons, lats)
+        cross_xs, cross_ys = warp_transform(
+            "EPSG:4326", src.crs, list(cross_lons), list(cross_lats)
+        )
         half = size // 2
-        for x, y in zip(xs, ys):
+        for x, y, cross_x, cross_y in zip(xs, ys, cross_xs, cross_ys):
             row, col = src.index(x, y)
             window = Window(col - half, row - half, size, size)
             arr = src.read((1, 2, 3), window=window, boundless=True, fill_value=0)
             patches.append(np.transpose(arr, (1, 2, 0)))
-    return patches, size, resolution
+            cross_row, cross_col = src.index(cross_x, cross_y)
+            cross_pixels.append((cross_col - (col - half),
+                                 cross_row - (row - half)))
+    return patches, size, resolution, cross_pixels, has_centroid
 
 
 TOOLBAR = """<div class="bar">
@@ -482,10 +616,26 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
                       f"{patch_metres:g} x {patch_metres:g} m</span>"]
     header += [label for label, _ in photo_columns]
 
+    centroid_count = (int(gdf["detection_centroid_longitude"].notna().sum())
+                      if "detection_centroid_longitude" in gdf.columns else 0)
+    outside_count = (int(gdf["detection_centroid_view_note"].notna().sum())
+                     if "detection_centroid_view_note" in gdf.columns else 0)
+    if centroid_count:
+        visible_count = centroid_count - outside_count
+        cross_note = (f"Patches are centred on the recorded coordinate. The red "
+                      f"cross marks the ID-joined imagery-detection centroid for "
+                      f"{visible_count} sites and the recorded coordinate for "
+                      f"unmatched/new sites.")
+        if outside_count:
+            cross_note += (f" {outside_count} joined centroids outside the view "
+                           f"are flagged and have no cross.")
+    else:
+        cross_note = "The red cross marks the recorded coordinate."
+
     return (head + f"\n<h1>{html.escape(title)}</h1>\n"
             f'<div class="sub">{len(gdf)} sites. Satellite patches are '
-            f"{patch_metres} m across, centred on the recorded coordinate "
-            f"(crosshair). Click a photo to open it full size.</div>\n"
+            f"{patch_metres} m across. "
+            f"{cross_note} Click a photo to open it full size.</div>\n"
             + TOOLBAR
             + "<table><thead><tr>"
             + "".join(f"<th>{h}</th>" for h in header)
@@ -523,8 +673,8 @@ def main(argv=None):
     parser.add_argument("--arm-metres", type=float, default=20.0,
                         help="length of the red cross arms, in metres (default 20; "
                              "0 draws no cross, only the corner labels)")
-    parser.add_argument("--cross-alpha", type=int, default=150,
-                        help="opacity of the red cross, 0-255 (default 150)")
+    parser.add_argument("--cross-alpha", type=int, default=65,
+                        help="opacity of the red cross, 0-255 (default 65)")
     parser.add_argument("--label-alpha", type=int, default=150,
                         help="opacity of the distance labels, 0-255 (default 150)")
     parser.add_argument("--id-label", action="store_true",
@@ -590,8 +740,27 @@ def main(argv=None):
         )
     print("photo questions: " + ", ".join(label for label, _ in photo_columns))
 
-    patches, patch_px, resolution = extract_patches(
-        args.raster, gdf.geometry.x, gdf.geometry.y, args.patch_metres)
+    cross_lons = (gdf["detection_centroid_longitude"]
+                  if "detection_centroid_longitude" in gdf.columns else None)
+    cross_lats = (gdf["detection_centroid_latitude"]
+                  if "detection_centroid_latitude" in gdf.columns else None)
+    patches, patch_px, resolution, cross_pixels, has_centroid = extract_patches(
+        args.raster, gdf.geometry.x, gdf.geometry.y, args.patch_metres,
+        cross_lons=cross_lons, cross_lats=cross_lats)
+    cross_in_view = np.array([
+        0 <= x < patch_px and 0 <= y < patch_px for x, y in cross_pixels
+    ])
+    has_centroid = np.asarray(has_centroid, dtype=bool)
+    outside_centroid = has_centroid & ~cross_in_view
+
+    gdf["detection_centroid_view_note"] = None
+    for position in np.flatnonzero(outside_centroid):
+        offset = gdf.iloc[position].get("detection_centroid_offset_m")
+        direction = gdf.iloc[position].get("detection_centroid_direction")
+        gdf.iat[position, gdf.columns.get_loc("detection_centroid_view_note")] = (
+            f"Outside {args.patch_metres:g} m view "
+            f"({float(offset):,.0f} m {direction})"
+        )
     print(f"cut {len(patches)} patches of {args.patch_metres:g} x {args.patch_metres:g} m "
           f"= {patch_px} x {patch_px} px at {resolution:g} m/px")
 
@@ -601,10 +770,15 @@ def main(argv=None):
     patches = [annotate_patch(p, add_cross, resolution, args.patch_metres,
                               args.arm_metres, ids[i],
                               cross_alpha=args.cross_alpha,
-                              label_alpha=args.label_alpha)
+                              label_alpha=args.label_alpha,
+                              cross_xy=cross_pixels[i],
+                              draw_cross=not outside_centroid[i])
                for i, p in enumerate(patches)]
     print(f"annotated with a {args.arm_metres:g} m cross "
-          f"(alpha {args.cross_alpha}) and labels (alpha {args.label_alpha})")
+          f"(alpha {args.cross_alpha}) and labels (alpha {args.label_alpha}); "
+          f"{int((has_centroid & cross_in_view).sum())} cross(es) use an "
+          f"ID-joined detection centroid, {int(outside_centroid.sum())} joined "
+          f"centroid(s) are outside the view")
 
     if args.local_photos:
         folder = Path(args.local_photos)
