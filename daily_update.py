@@ -132,7 +132,7 @@ def build_contact_sheet(patch_metres, cross_alpha, label_alpha):
                 "--photo-url-base", PHOTO_URL_BASE,
                 "--photo-root", str(HERE / "photos"),
                 "--detection-layer", DETECTION_LAYER,
-                "--exclude-id-prefix", "X", "Y",
+                "--hide-detection-for-id-prefix", "X", "Y",
                 "--patch-dir", str(HERE / "docs" / "patches"),
                 "--patch-url-base", "patches/",
                 "--patch-metres", str(patch_metres),

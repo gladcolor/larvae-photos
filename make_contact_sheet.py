@@ -125,7 +125,7 @@ def display_habitat(value):
 
 def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
                              detection_type_field="class_name",
-                             exclude_prefixes=("X", "Y")):
+                             hide_prefixes=("X", "Y")):
     """ID-join imagery detections to field observations and add display fields.
 
     ``Not a habitat`` is a field rejection of an imagery detection, not a fourth
@@ -140,12 +140,12 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
 
     joined = gdf.copy()
     joined["_comparison_id"] = joined[id_field].map(normalize_site_id)
-    prefixes = tuple(str(p).strip().upper() for p in exclude_prefixes if str(p).strip())
+    prefixes = tuple(str(p).strip().upper() for p in hide_prefixes if str(p).strip())
+    is_new = joined["_comparison_id"].map(lambda value: value.startswith(prefixes))
     if prefixes:
-        is_new = joined["_comparison_id"].str.startswith(prefixes, na=False)
-        print(f"excluded {int(is_new.sum())} new-site row(s) with ID prefix "
-              f"{', '.join(prefixes)}")
-        joined = joined.loc[~is_new].copy()
+        print(f"kept {int(is_new.sum())} new-site row(s) with ID prefix "
+              f"{', '.join(prefixes)}; imagery comparison hidden for those rows")
+    joined["_new_field_site"] = is_new
 
     detections = gpd.read_file(detection_path, ignore_geometry=True)
     missing = [name for name in (detection_id_field, detection_type_field)
@@ -165,10 +165,13 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
     joined["imagery_detected_habitat"] = (
         joined["_comparison_id"].map(detected_by_id).map(display_habitat)
     )
+    joined.loc[joined["_new_field_site"], "imagery_detected_habitat"] = None
 
     def comparison(row):
         observed = row["field_observed_habitat"]
         detected = row["imagery_detected_habitat"]
+        if row["_new_field_site"]:
+            return None
         if detected is None or str(detected) in ("", "nan", "<NA>"):
             return "No detection ID match"
         if observed == "Not a habitat":
@@ -180,9 +183,10 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
     agreements = int(joined["detection_field_comparison"].eq("Match").sum())
     rejected = int(joined["detection_field_comparison"].eq(
         "Field-rejected detection").sum())
-    print(f"ID-joined {matched} of {len(joined)} numbered site(s): "
+    numbered = int((~joined["_new_field_site"]).sum())
+    print(f"ID-joined {matched} of {numbered} numbered site(s): "
           f"{agreements} category matches, {rejected} field-rejected detections")
-    return joined.drop(columns="_comparison_id")
+    return joined.drop(columns=["_comparison_id", "_new_field_site"])
 
 
 def discover_photo_columns(columns, catalogue=None):
@@ -540,9 +544,10 @@ def main(argv=None):
     parser.add_argument("--detection-type-field", default="class_name",
                         help="habitat-class field in --detection-layer "
                              "(default: class_name)")
-    parser.add_argument("--exclude-id-prefix", nargs="*", default=["X", "Y"],
-                        metavar="PREFIX", help="site ID prefixes excluded when the "
-                             "detection comparison is enabled (default: X Y)")
+    parser.add_argument("--hide-detection-for-id-prefix", nargs="*",
+                        default=["X", "Y"], metavar="PREFIX",
+                        help="keep these new-site IDs but hide imagery-comparison "
+                             "fields for them (default: X Y)")
     parser.add_argument("--title", default="Semera / Logiya larval habitat sites")
     args = parser.parse_args(argv)
 
@@ -561,7 +566,7 @@ def main(argv=None):
             args.detection_layer,
             detection_id_field=args.detection_id_field,
             detection_type_field=args.detection_type_field,
-            exclude_prefixes=args.exclude_id_prefix,
+            hide_prefixes=args.hide_detection_for_id_prefix,
         )
     sort_column = args.sort or find_field(list(gdf.columns), "habitat_id")
     if sort_column and sort_column in gdf.columns:
