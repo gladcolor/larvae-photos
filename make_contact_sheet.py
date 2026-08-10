@@ -159,9 +159,10 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
     if detections.geometry.isna().any() or detections.geometry.is_empty.any():
         raise ValueError("detection layer contains missing or empty geometries")
 
-    # Calculate centroids in a projected CRS, never directly in longitude/latitude.
-    # The current detection layer is UTM, while the fallback handles a future
-    # geographic layer without silently introducing a distorted centroid.
+    # Calculate the centre of each detection feature's bounding box in a
+    # projected CRS, never directly in longitude/latitude. A dissolved feature
+    # can be irregular, so its area-weighted polygon centroid is not necessarily
+    # the box centroid requested for the map marker.
     projected = detections
     if detections.crs.is_geographic:
         projected_crs = detections.estimate_utm_crs()
@@ -169,7 +170,7 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
             raise ValueError("could not choose a projected CRS for detection centroids")
         projected = detections.to_crs(projected_crs)
     centroid_wgs84 = gpd.GeoSeries(
-        projected.geometry.centroid, crs=projected.crs
+        projected.geometry.envelope.centroid, crs=projected.crs
     ).to_crs("EPSG:4326")
     detections["_centroid_longitude"] = centroid_wgs84.x.to_numpy()
     detections["_centroid_latitude"] = centroid_wgs84.y.to_numpy()
@@ -623,7 +624,7 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
     if centroid_count:
         visible_count = centroid_count - outside_count
         cross_note = (f"Patches are centred on the recorded coordinate. The red "
-                      f"cross marks the ID-joined imagery-detection centroid for "
+                      f"cross marks the ID-joined detection-box centroid for "
                       f"{visible_count} sites and the recorded coordinate for "
                       f"unmatched/new sites.")
         if outside_count:
@@ -661,6 +662,8 @@ def main(argv=None):
     parser.add_argument("--patch-url-base", default=None, metavar="PREFIX",
                         help="URL prefix for --patch-dir files (default: the folder "
                              "name plus a slash)")
+    parser.add_argument("--clean-patch-dir", action="store_true",
+                        help="remove stale JPG patches not produced by this run")
     parser.add_argument("--photo-root", default=None, metavar="DIR",
                         help="folder that --photo-url-base maps to, used to check a "
                              "photo exists before linking it (default: the output "
@@ -834,6 +837,14 @@ def main(argv=None):
             Image.fromarray(patch).save(folder / name, format="JPEG", quality=88,
                                         subsampling=0, optimize=True)
             names.append(prefix + name)
+        if args.clean_patch_dir:
+            expected_names = {name.rsplit("/", 1)[-1] for name in names}
+            stale = [path for path in folder.glob("*.jpg")
+                     if path.name not in expected_names]
+            for path in stale:
+                path.unlink()
+            if stale:
+                print(f"removed {len(stale)} stale patch file(s) from {folder}")
         total = sum((folder / n.rsplit("/", 1)[-1]).stat().st_size for n in names)
         print(f"wrote {len(names)} patches to {folder} ({total / 1e6:.1f} MB)")
 

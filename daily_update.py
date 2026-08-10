@@ -35,9 +35,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,6 +61,46 @@ DETECTION_LAYER = (
 )
 
 STEPS = ("notebook", "patches", "publish")
+
+
+@contextmanager
+def exclusive_run_lock():
+    """Prevent two daily updates from using the same API/output/repository.
+
+    The lock is held by the open file handle and is released automatically if the
+    process exits or is interrupted. The small lock file itself may remain.
+    """
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUT_DIR / ".daily_update.lock"
+    handle = path.open("a+b")
+    handle.seek(0, os.SEEK_END)
+    if handle.tell() == 0:
+        handle.write(b"0")
+        handle.flush()
+    handle.seek(0)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise RuntimeError(
+            "another daily update is already running; wait for it to finish"
+        ) from exc
+    try:
+        yield
+    finally:
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def log(message):
@@ -134,6 +176,7 @@ def build_contact_sheet(patch_metres, cross_alpha, label_alpha):
                 "--detection-layer", DETECTION_LAYER,
                 "--hide-detection-for-id-prefix", "X", "Y",
                 "--patch-dir", str(HERE / "docs" / "patches"),
+                "--clean-patch-dir",
                 "--patch-url-base", "patches/",
                 "--patch-metres", str(patch_metres),
                 "--cross-alpha", str(cross_alpha),
@@ -167,14 +210,28 @@ def add_banner(path):
 
 
 def publish():
-    """Commit and push whatever the earlier steps changed."""
-    status = run(["git", "status", "--porcelain"]).stdout.strip()
+    """Commit and push only the generated GitHub Pages files in ``docs/``."""
+    already_staged = run(["git", "diff", "--cached", "--name-only"]).stdout.strip()
+    if already_staged:
+        log("  refusing to publish because files were already staged before docs/")
+        for path in already_staged.splitlines()[:10]:
+            log(f"    staged: {path}")
+        return False
+
+    status = run(["git", "status", "--porcelain", "--", "docs"]).stdout.strip()
     if not status:
         log("  nothing to publish")
         return True
-    log(f"  {len(status.splitlines())} path(s) changed")
+    log(f"  {len(status.splitlines())} docs/ path(s) changed")
 
-    if run(["git", "add", "-A"]).returncode != 0:
+    if run(["git", "add", "-A", "--", "docs"]).returncode != 0:
+        return False
+    staged = run(["git", "diff", "--cached", "--name-only"]).stdout.splitlines()
+    unexpected = [path for path in staged if not path.replace("\\", "/").startswith("docs/")]
+    if unexpected:
+        log("  refusing to publish unexpected staged paths")
+        for path in unexpected[:10]:
+            log(f"    staged: {path}")
         return False
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if run(["git", "commit", "-m", f"Daily update {stamp}"]).returncode != 0:
@@ -182,16 +239,7 @@ def publish():
     return run(["git", "push", "origin", "main"]).returncode == 0
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--skip", nargs="*", default=[], choices=STEPS,
-                        help="steps to skip")
-    parser.add_argument("--patch-metres", type=float, default=100.0)
-    parser.add_argument("--cross-alpha", type=int, default=65)
-    parser.add_argument("--label-alpha", type=int, default=150)
-    args = parser.parse_args(argv)
-
+def run_pipeline(args):
     started = time.time()
     log("=" * 64)
     log(f"daily update starting ({datetime.now():%Y-%m-%d %H:%M})")
@@ -220,6 +268,24 @@ def main(argv=None):
         + ("all steps ok" if not failed else f"FAILED: {', '.join(failed)}"))
     log(f"site: https://gladcolor.github.io/larvae-photos/")
     return 1 if failed else 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--skip", nargs="*", default=[], choices=STEPS,
+                        help="steps to skip")
+    parser.add_argument("--patch-metres", type=float, default=100.0)
+    parser.add_argument("--cross-alpha", type=int, default=65)
+    parser.add_argument("--label-alpha", type=int, default=150)
+    args = parser.parse_args(argv)
+
+    try:
+        with exclusive_run_lock():
+            return run_pipeline(args)
+    except RuntimeError as exc:
+        log(f"daily update not started: {exc}")
+        return 2
 
 
 if __name__ == "__main__":
