@@ -3,12 +3,17 @@
 INTERNAL USE ONLY. All rights reserved. Reuse of any kind is not permitted; see
 NOTICE.md in this repository.
 
-Steps, in order, because each depends on the one before:
+Default order:
 
-  1. notebook   download new entries and photos, blur faces, push photos,
-                write CSV / Excel / GeoPackage
-  2. patches    cut satellite patches and rebuild the HTML contact sheet
-  3. publish    commit and push docs/ to GitHub Pages
+  1. data       fetch entries; write CSV / Excel / GeoPackage
+  2. site       cut satellite patches, rebuild HTML, and publish docs/
+  3. analysis   execute the survey distribution/comparison notebook in place
+  4. media      resumably download originals, blur faces, and push exact JPGs
+  5. final site rebuild HTML so newly available photos replace placeholders
+
+The public site is therefore refreshed before the rate-limited media queue starts.
+The legacy ``--skip`` names remain: ``notebook`` controls both data and media,
+``patches`` controls both site builds, and ``publish`` controls docs/ commits.
 
 The site lives in docs/ and holds only the page and the satellite patches. The
 photos are NOT part of the published site: at 2200+ files and 400+ MB they made the
@@ -46,6 +51,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PROJECT = HERE.parent                       # download_Epicollect5
 NOTEBOOK = PROJECT / "download_epicollect5.ipynb"
+ANALYSIS_NOTEBOOK = PROJECT / "survey_distribution_summary.ipynb"
 OUT_DIR = PROJECT / "output"
 GPKG = OUT_DIR / "epicollect5.gpkg"
 LOG = OUT_DIR / "daily_update.log"
@@ -125,30 +131,150 @@ def run(command, cwd=None):
     return done
 
 
-def run_notebook():
-    """Execute the notebook's code cells in order, in this interpreter's env.
-
-    The notebook is the single source of truth for the download, blur and push
-    logic, so it is executed rather than duplicated here.
-    """
+def _notebook_session():
+    """Load the canonical notebook and locate its phase boundaries."""
     if not NOTEBOOK.exists():
         log(f"  notebook not found: {NOTEBOOK}")
-        return False
+        return None
 
     cells = json.loads(NOTEBOOK.read_text(encoding="utf-8"))["cells"]
-    scope = {"__name__": "__main__"}
-    for index, cell in enumerate(cells):
-        if cell["cell_type"] != "code":
-            continue
-        source = "".join(cell["source"])
-        if not source.strip():
-            continue
-        try:
-            exec(compile(source, f"notebook_cell_{index}", "exec"), scope)
-        except Exception as exc:
-            log(f"  notebook cell {index} failed: {exc.__class__.__name__}: {exc}")
+    markers = {
+        "settings": "DOWNLOAD_PHOTOS =",
+        "media": "def media_filename(value):",
+        "blur": "from face_blur import FaceBlurrer",
+        "photo_publish": "def git(*args, cwd):",
+        "photo_urls": "def github_photo_url(filename):",
+        "summary": 'print(f"run finished',
+    }
+    located = {}
+    for name, marker in markers.items():
+        matches = [
+            index for index, cell in enumerate(cells)
+            if cell.get("cell_type") == "code"
+            and marker in "".join(cell.get("source", []))
+        ]
+        if len(matches) != 1:
+            log(f"  canonical notebook phase marker {name!r} matched {len(matches)} cells")
+            return None
+        located[name] = matches[0]
+
+    order = [located[name] for name in
+             ("settings", "media", "blur", "photo_publish", "photo_urls", "summary")]
+    if order != sorted(order):
+        log("  canonical notebook phase cells are in an unexpected order")
+        return None
+    return cells, {"__name__": "__main__"}, located
+
+
+def _execute_notebook_cell(session, index):
+    cells, scope, _ = session
+    source = "".join(cells[index].get("source", []))
+    if not source.strip():
+        return True
+    try:
+        exec(compile(source, f"notebook_cell_{index}", "exec"), scope)
+    except Exception as exc:
+        log(f"  notebook cell {index} failed: {exc.__class__.__name__}: {exc}")
+        return False
+    return True
+
+
+def _safe_daily_settings(scope):
+    """Reject partial or privacy-unsafe settings before the first API call."""
+    required = {
+        "DOWNLOAD_PHOTOS": True,
+        "MAX_PHOTOS": None,
+        "BLUR_FACES": True,
+        "GIT_PUSH": True,
+        "PHOTO_URL_MODE": "all",
+    }
+    unsafe = [
+        f"{name}={scope.get(name)!r} (required {expected!r})"
+        for name, expected in required.items()
+        if scope.get(name) != expected
+    ]
+    if unsafe:
+        log("  unsafe or partial daily settings:")
+        for detail in unsafe:
+            log(f"    {detail}")
+        return False
+    return True
+
+
+def start_notebook_data():
+    """Fetch/shape entries and atomically write tables and the GeoPackage.
+
+    The media cell first runs in manifest-only mode. This derives photo filenames
+    and URLs without downloading anything or clearing the missing-photo report.
+    """
+    session = _notebook_session()
+    if session is None:
+        return None
+    cells, scope, located = session
+
+    setup = [
+        index for index, cell in enumerate(cells)
+        if cell.get("cell_type") == "code" and index < located["media"]
+    ]
+    for index in setup:
+        if not _execute_notebook_cell(session, index):
+            return None
+        if index == located["settings"] and not _safe_daily_settings(scope):
+            return None
+
+    scope["MEDIA_MANIFEST_ONLY"] = True
+    if not _execute_notebook_cell(session, located["media"]):
+        return None
+
+    # Populate the remote-photo inventory without staging or pushing. The URL
+    # mode is normally "all", but this also keeps "published" mode correct.
+    configured_push = scope.get("GIT_PUSH", False)
+    scope["GIT_PUSH"] = False
+    try:
+        if not _execute_notebook_cell(session, located["photo_publish"]):
+            return None
+    finally:
+        scope["GIT_PUSH"] = configured_push
+
+    data_tail = [
+        index for index, cell in enumerate(cells)
+        if cell.get("cell_type") == "code"
+        and located["photo_urls"] <= index < located["summary"]
+    ]
+    for index in data_tail:
+        if not _execute_notebook_cell(session, index):
+            return None
+    return session
+
+
+def finish_notebook_media(session):
+    """Download, anonymise, and selectively publish survey JPGs."""
+    _, scope, located = session
+    scope["MEDIA_MANIFEST_ONLY"] = False
+    for name in ("media", "blur", "photo_publish", "summary"):
+        if not _execute_notebook_cell(session, located[name]):
             return False
     return True
+
+
+def run_notebook():
+    """Backward-compatible complete notebook execution in data-first order."""
+    session = start_notebook_data()
+    return session is not None and finish_notebook_media(session)
+
+
+def refresh_analysis_notebook():
+    """Execute and save the current distribution/comparison notebook."""
+    if not ANALYSIS_NOTEBOOK.exists():
+        log(f"  analysis notebook not found: {ANALYSIS_NOTEBOOK}")
+        return False
+    done = run([
+        sys.executable, "-m", "jupyter", "nbconvert",
+        "--to", "notebook", "--execute", "--inplace",
+        "--ExecutePreprocessor.timeout=-1",
+        ANALYSIS_NOTEBOOK.name,
+    ], cwd=PROJECT)
+    return done.returncode == 0
 
 
 PHOTO_URL_BASE = ("https://raw.githubusercontent.com/gladcolor/larvae-photos/"
@@ -236,7 +362,14 @@ def publish():
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if run(["git", "commit", "-m", f"Daily update {stamp}"]).returncode != 0:
         return False
-    return run(["git", "push", "origin", "main"]).returncode == 0
+    for attempt in range(1, 4):
+        if run(["git", "push", "origin", "main"]).returncode == 0:
+            return True
+        if attempt < 3:
+            wait = 5 * attempt
+            log(f"  docs push failed; retrying in {wait}s")
+            time.sleep(wait)
+    return False
 
 
 def run_pipeline(args):
@@ -245,23 +378,64 @@ def run_pipeline(args):
     log(f"daily update starting ({datetime.now():%Y-%m-%d %H:%M})")
 
     results = {}
-    for step in STEPS:
-        if step in args.skip:
-            log(f"{step}: skipped")
-            continue
-        log(f"{step}: running")
+
+    def stage(name, action):
+        log(f"{name}: running")
         step_started = time.time()
-        if step == "notebook":
-            ok = run_notebook()
-        elif step == "patches":
-            ok = build_contact_sheet(args.patch_metres, args.cross_alpha,
-                                     args.label_alpha)
+        value = action()
+        ok = value is not None and value is not False
+        results[name] = ok
+        log(f"{name}: {'ok' if ok else 'FAILED'} in "
+            f"{time.time() - step_started:.0f}s")
+        return value if ok else None
+
+    def site():
+        return build_contact_sheet(args.patch_metres, args.cross_alpha,
+                                   args.label_alpha)
+
+    session = None
+    if "notebook" not in args.skip:
+        session = stage("data", start_notebook_data)
+        if session is None:
+            return _finish_run(started, results)
+
+        # Make fresh survey data visible before the rate-limited photo queue.
+        if "patches" not in args.skip:
+            if stage("site-early", site) is None:
+                return _finish_run(started, results)
+            if "publish" not in args.skip:
+                if stage("publish-early", publish) is None:
+                    return _finish_run(started, results)
         else:
-            ok = publish()
-        results[step] = ok
-        log(f"{step}: {'ok' if ok else 'FAILED'} in {time.time() - step_started:.0f}s")
-        if not ok:
-            break        # later steps would publish stale or partial output
+            log("patches: skipped")
+
+        if stage("analysis", refresh_analysis_notebook) is None:
+            return _finish_run(started, results)
+
+        if stage("media", lambda: finish_notebook_media(session)) is None:
+            return _finish_run(started, results)
+    else:
+        log("notebook: skipped")
+
+    # Rebuild after media so placeholders become photos. With --skip notebook this
+    # remains the familiar imagery/page-only recovery path.
+    if "patches" not in args.skip:
+        label = "site-final" if session is not None else "patches"
+        if stage(label, site) is None:
+            return _finish_run(started, results)
+
+    if "publish" not in args.skip:
+        label = "publish-final" if session is not None else "publish"
+        if stage(label, publish) is None:
+            return _finish_run(started, results)
+    else:
+        log("publish: skipped")
+
+    return _finish_run(started, results)
+
+
+def _finish_run(started, results):
+    """Log a single final status and translate it to a process exit code."""
 
     failed = [name for name, ok in results.items() if not ok]
     log(f"finished in {time.time() - started:.0f}s; "
