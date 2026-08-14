@@ -279,7 +279,16 @@ class FaceBlurrer:
             feather = int(max(3, self.feather_frac * min(rh, rw)))
             if feather % 2 == 0:
                 feather += 1
-            mask = cv2.GaussianBlur(mask, (feather, feather), 0)
+            # OpenCV can throw an opaque C++ exception when the feather kernel
+            # is larger than a very small detected-face region. Keep the kernel
+            # odd and inside the mask dimensions; the main blur has already
+            # returned above for regions smaller than three pixels.
+            max_feather = min(rh, rw)
+            if max_feather % 2 == 0:
+                max_feather -= 1
+            feather = min(feather, max_feather)
+            if feather >= 3:
+                mask = cv2.GaussianBlur(mask, (feather, feather), 0)
             alpha = mask.astype(np.float32)[..., None] / 255.0
             img[y0:y1, x0:x1] = np.clip(
                 alpha * blurred + (1.0 - alpha) * roi, 0, 255
