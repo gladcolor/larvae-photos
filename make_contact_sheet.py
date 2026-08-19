@@ -30,6 +30,7 @@ import argparse
 import base64
 import html
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -466,7 +467,7 @@ TOOLBAR = """<div class="bar">
 </div>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
-  var tbody = document.querySelector("tbody");
+  var tbody = document.querySelector("#gallery tbody");
   var rows = Array.prototype.slice.call(tbody.rows);
   var key = "id", dir = "asc";
   document.getElementById("rowcount").textContent = rows.length + " sites";
@@ -506,21 +507,251 @@ document.addEventListener("DOMContentLoaded", function () {
 """
 
 
+INSPECTION_SCRIPT = r"""<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var records = JSON.parse(document.getElementById("inspectionData").textContent);
+  var visible = records.slice();
+  var position = 0;
+  var zoom = 1;
+
+  var gallery = document.getElementById("gallery");
+  var inspection = document.getElementById("inspection");
+  var tabButtons = Array.prototype.slice.call(document.querySelectorAll(".tabButton"));
+  var recordInput = document.getElementById("inspectionRecord");
+  var filter = document.getElementById("inspectionFilter");
+  var counter = document.getElementById("inspectionCounter");
+  var previous = document.getElementById("inspectionPrevious");
+  var next = document.getElementById("inspectionNext");
+  var siteId = document.getElementById("inspectionSiteId");
+  var status = document.getElementById("inspectionStatus");
+  var details = document.getElementById("inspectionDetails");
+  var joinDetails = document.getElementById("inspectionJoin");
+  var satellite = document.getElementById("inspectionSatellite");
+  var satelliteLink = document.getElementById("inspectionSatelliteLink");
+  var mapFrame = document.getElementById("inspectionMapFrame");
+  var photoGrid = document.getElementById("inspectionPhotos");
+  var photoCount = document.getElementById("inspectionPhotoCount");
+  var zoomValue = document.getElementById("inspectionZoomValue");
+  var empty = document.getElementById("inspectionEmpty");
+  var content = document.getElementById("inspectionContent");
+
+  function addDetail(container, label, value, tone) {
+    if (value === null || value === undefined || value === "") return;
+    var item = document.createElement("div");
+    item.className = "detailItem" + (tone ? " " + tone : "");
+    var key = document.createElement("span");
+    key.className = "detailLabel";
+    key.textContent = label;
+    var text = document.createElement("strong");
+    text.textContent = value;
+    item.appendChild(key);
+    item.appendChild(text);
+    container.appendChild(item);
+  }
+
+  function setZoom(nextZoom) {
+    zoom = Math.max(1, Math.min(4, nextZoom));
+    satellite.style.width = (zoom * 100) + "%";
+    satellite.style.maxWidth = "none";
+    zoomValue.textContent = Math.round(zoom * 100) + "%";
+    if (zoom === 1) {
+      mapFrame.scrollLeft = 0;
+      mapFrame.scrollTop = 0;
+    }
+  }
+
+  function render() {
+    var hasRecord = visible.length > 0;
+    empty.hidden = hasRecord;
+    content.hidden = !hasRecord;
+    previous.disabled = !hasRecord || visible.length < 2;
+    next.disabled = !hasRecord || visible.length < 2;
+    if (!hasRecord) {
+      counter.textContent = "0 records";
+      return;
+    }
+
+    position = Math.max(0, Math.min(position, visible.length - 1));
+    var record = visible[position];
+    counter.textContent = (position + 1) + " of " + visible.length;
+    recordInput.value = record.id;
+    siteId.textContent = "Site " + record.id;
+    status.textContent = record.status;
+    status.className = "statusBadge " + record.tone;
+
+    details.textContent = "";
+    record.survey.forEach(function (item) {
+      addDetail(details, item.label, item.value);
+    });
+
+    joinDetails.textContent = "";
+    record.join.forEach(function (item) {
+      addDetail(joinDetails, item.label, item.value, item.tone || "");
+    });
+
+    satellite.src = record.patch;
+    satellite.alt = "Satellite view for site " + record.id;
+    satelliteLink.href = record.patch;
+    setZoom(1);
+
+    photoGrid.textContent = "";
+    photoCount.textContent = record.photos.length +
+      (record.photos.length === 1 ? " photo" : " photos");
+    if (!record.photos.length) {
+      var none = document.createElement("div");
+      none.className = "inspectionNoPhotos";
+      none.textContent = "No site photos are available for this record.";
+      photoGrid.appendChild(none);
+    }
+    record.photos.forEach(function (photo) {
+      var figure = document.createElement("figure");
+      figure.className = "inspectionPhoto";
+      var link = document.createElement("a");
+      link.href = photo.src;
+      link.target = "_blank";
+      link.rel = "noopener";
+      var image = document.createElement("img");
+      image.src = photo.src;
+      image.alt = photo.label + " for site " + record.id;
+      image.loading = "lazy";
+      var caption = document.createElement("figcaption");
+      caption.textContent = photo.label;
+      link.appendChild(image);
+      figure.appendChild(link);
+      figure.appendChild(caption);
+      photoGrid.appendChild(figure);
+    });
+  }
+
+  function matchFilter(record, value) {
+    if (value === "all") return true;
+    if (value === "mismatch") return record.comparison === "Mismatch";
+    if (value === "rejected") return record.comparison === "Field-rejected detection";
+    if (value === "unmatched") return record.comparison === "No detection ID match";
+    if (value === "offset") return record.offset !== null && record.offset > 10;
+    if (value === "new") return record.isNew;
+    if (value === "positive") return record.larvae > 0;
+    return true;
+  }
+
+  function applyFilter() {
+    var currentId = visible[position] ? visible[position].id : "";
+    visible = records.filter(function (record) {
+      return matchFilter(record, filter.value);
+    });
+    var retained = visible.findIndex(function (record) { return record.id === currentId; });
+    position = retained >= 0 ? retained : 0;
+    render();
+  }
+
+  function move(amount) {
+    if (!visible.length) return;
+    position = (position + amount + visible.length) % visible.length;
+    render();
+  }
+
+  function selectRecord() {
+    var query = recordInput.value.trim().toLocaleLowerCase();
+    if (!query) return;
+    var exact = visible.findIndex(function (record) {
+      return record.id.toLocaleLowerCase() === query;
+    });
+    var partial = exact >= 0 ? exact : visible.findIndex(function (record) {
+      return record.id.toLocaleLowerCase().indexOf(query) >= 0;
+    });
+    if (partial >= 0) {
+      position = partial;
+      render();
+    }
+  }
+
+  function showView(name) {
+    var inspect = name === "inspection";
+    gallery.hidden = inspect;
+    inspection.hidden = !inspect;
+    tabButtons.forEach(function (button) {
+      var active = button.dataset.view === name;
+      button.setAttribute("aria-selected", String(active));
+      button.tabIndex = active ? 0 : -1;
+    });
+    if (inspect) render();
+    if (window.location.hash !== "#" + name) {
+      history.replaceState(null, "", "#" + name);
+    }
+  }
+
+  tabButtons.forEach(function (button) {
+    button.addEventListener("click", function () { showView(button.dataset.view); });
+  });
+  previous.addEventListener("click", function () { move(-1); });
+  next.addEventListener("click", function () { move(1); });
+  filter.addEventListener("change", applyFilter);
+  recordInput.addEventListener("change", selectRecord);
+  recordInput.addEventListener("keydown", function (event) {
+    if (event.key === "Enter") selectRecord();
+  });
+  document.getElementById("inspectionZoomIn").addEventListener("click", function () {
+    setZoom(zoom + 0.5);
+  });
+  document.getElementById("inspectionZoomOut").addEventListener("click", function () {
+    setZoom(zoom - 0.5);
+  });
+  document.getElementById("inspectionZoomReset").addEventListener("click", function () {
+    setZoom(1);
+  });
+  mapFrame.addEventListener("wheel", function (event) {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    setZoom(zoom + (event.deltaY < 0 ? 0.25 : -0.25));
+  }, {passive: false});
+  document.addEventListener("keydown", function (event) {
+    if (inspection.hidden) return;
+    var tag = document.activeElement ? document.activeElement.tagName : "";
+    if (tag === "INPUT" || tag === "SELECT") return;
+    if (event.key === "ArrowLeft") move(-1);
+    if (event.key === "ArrowRight") move(1);
+  });
+
+  var list = document.getElementById("inspectionRecordList");
+  records.forEach(function (record) {
+    var option = document.createElement("option");
+    option.value = record.id;
+    list.appendChild(option);
+  });
+  showView(window.location.hash === "#inspection" ? "inspection" : "gallery");
+});
+</script>"""
+
+
 def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
                photo_columns):
     """patch_src(i) -> src for the satellite cell.
     photo_src(row, field) -> a URL or data URI, or None."""
-    head = """<meta charset="utf-8">
+    head = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>
- :root {{ color-scheme: light dark; }}
- body {{ font: 13px/1.45 system-ui, "Segoe UI", sans-serif; margin: 0; padding: 16px;
-        background: #fbfbfa; color: #1a1a18; }}
- h1 {{ font-size: 19px; margin: 0 0 4px; }}
- .sub {{ color: #6b6b66; margin-bottom: 14px; }}
+ :root {{ color-scheme: light dark; --paper:#f6f4ef; --panel:#fff; --ink:#20231f;
+          --muted:#667067; --line:#d9ddd6; --accent:#b94022; --accentSoft:#f6e5df;
+          --good:#246b4a; --goodSoft:#e3f1e9; --warn:#946313; --warnSoft:#f7edcf; }}
+ * {{ box-sizing: border-box; }}
+ body {{ font: 13px/1.45 system-ui, "Segoe UI", sans-serif; margin: 0; padding: 18px;
+        background: var(--paper); color: var(--ink); }}
+ .pageShell {{ width:100%; max-width:none; margin:0 auto; }}
+ .pageHead {{ display:flex; align-items:flex-end; justify-content:space-between; gap:20px;
+              margin-bottom:14px; }}
+ h1 {{ font-size: clamp(20px, 2vw, 28px); line-height:1.1; margin: 0 0 5px; }}
+ .sub {{ color: var(--muted); max-width:980px; }}
+ .tabs {{ display:inline-flex; gap:4px; padding:4px; border:1px solid var(--line);
+          border-radius:12px; background:color-mix(in srgb, var(--panel) 80%, transparent); }}
+ .tabButton {{ border:0; border-radius:8px; padding:8px 15px; background:transparent;
+               color:inherit; font-family:inherit; font-size:13px; font-weight:650;
+               line-height:1.2; cursor:pointer; }}
+ .tabButton[aria-selected="true"] {{ background:var(--ink); color:var(--panel); }}
+ .view[hidden] {{ display:none !important; }}
  table {{ border-collapse: collapse; width: 100%; }}
  th, td {{ padding: 6px; border-bottom: 1px solid #e4e4e0; vertical-align: top; }}
- thead th {{ position: sticky; top: 0; background: #fbfbfa; text-align: left;
+ thead th {{ position: sticky; top: 0; background: var(--paper); text-align: left;
              font-weight: 600; border-bottom: 2px solid #cfcfc9; z-index: 2; }}
  td.info {{ min-width: 150px; font-size: 12px; }}
  td.info b {{ font-size: 14px; }}
@@ -540,16 +771,86 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
  .bar button[aria-pressed="true"] {{ background: #d24317; border-color: #d24317;
     color: #fff; }}
  .bar .count {{ color: #6b6b66; margin-left: auto; }}
+ .inspectionBar {{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px;
+                   margin-bottom:12px; border:1px solid var(--line); border-radius:12px;
+                   background:var(--panel); }}
+ .inspectionBar button, .inspectionBar input, .inspectionBar select,
+ .zoomControls button {{ min-height:36px; border:1px solid var(--line); border-radius:8px;
+                         padding:7px 11px; background:var(--panel); color:inherit; font:inherit; }}
+ .inspectionBar button, .zoomControls button {{ cursor:pointer; font-weight:650; }}
+ .inspectionBar button:hover, .zoomControls button:hover {{ border-color:var(--accent); }}
+ .inspectionBar input {{ width:min(220px, 45vw); }}
+ .inspectionCounter {{ margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }}
+ .inspectionLayout {{ display:grid; grid-template-columns:minmax(480px, 1.3fr) minmax(390px, 1fr);
+                      gap:14px; align-items:start; }}
+ .mapPanel, .auditPanel, .photoPanel {{ background:var(--panel); border:1px solid var(--line);
+                                      border-radius:14px; overflow:hidden; box-shadow:0 8px 24px rgba(24,31,24,.06); }}
+ .panelHead {{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+               padding:12px 14px; border-bottom:1px solid var(--line); }}
+ .panelHead h2, .panelHead h3 {{ margin:0; font-size:16px; }}
+ .inspectionMapFrame {{ aspect-ratio:1; width:100%; overflow:auto; background:#161b17;
+                        display:block; scrollbar-color:#7c867d #242b25; }}
+ .inspectionMapFrame img {{ display:block; width:100%; height:auto; min-width:100%; border-radius:0; }}
+ .mapFooter {{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+               padding:10px 12px; color:var(--muted); }}
+ .zoomControls {{ display:flex; align-items:center; gap:6px; }}
+ .zoomControls button {{ min-width:36px; padding:5px 9px; }}
+ .zoomValue {{ min-width:48px; text-align:center; font-variant-numeric:tabular-nums; }}
+ .rightColumn {{ display:grid; gap:14px; min-width:0; }}
+ .auditBody {{ padding:14px; display:grid; gap:14px; }}
+ .recordTop {{ display:flex; align-items:center; justify-content:space-between; gap:10px; }}
+ .recordTop h2 {{ margin:0; font-size:22px; }}
+ .statusBadge {{ display:inline-flex; align-items:center; min-height:28px; padding:5px 9px;
+                 border-radius:999px; font-size:12px; font-weight:750; background:#eceeea; }}
+ .toneMatch {{ color:var(--good); background:var(--goodSoft); }}
+ .toneMismatch, .toneRejected, .toneOffset {{ color:var(--accent); background:var(--accentSoft); }}
+ .toneNew, .toneUnmatched {{ color:var(--warn); background:var(--warnSoft); }}
+ .detailSection h3 {{ font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+                      color:var(--muted); margin:0 0 8px; }}
+ .detailGrid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }}
+ .detailItem {{ min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:9px;
+                background:color-mix(in srgb, var(--paper) 55%, var(--panel)); }}
+ .detailItem.toneOffset, .detailItem.toneMismatch, .detailItem.toneRejected {{ border-color:#df9f8e; }}
+ .detailLabel {{ display:block; color:var(--muted); font-size:11px; margin-bottom:2px; }}
+ .detailItem strong {{ display:block; overflow-wrap:anywhere; font-size:13px; }}
+ .inspectionPhotos {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;
+                      padding:12px; }}
+ .inspectionPhoto {{ margin:0; min-width:0; border:1px solid var(--line); border-radius:10px;
+                     overflow:hidden; background:var(--paper); }}
+ .inspectionPhoto a {{ display:block; background:#151a16; }}
+ .inspectionPhoto img {{ width:100%; height:auto; aspect-ratio:4/3; object-fit:contain;
+                         border-radius:0; transition:opacity .18s ease; }}
+ .inspectionPhoto a:hover img {{ opacity:.88; }}
+ .inspectionPhoto figcaption {{ padding:7px 9px; color:var(--muted); font-size:12px; }}
+ .inspectionNoPhotos, .inspectionEmpty {{ padding:34px; text-align:center; color:var(--muted); }}
+ .inspectionEmpty {{ border:1px solid var(--line); border-radius:12px; background:var(--panel); }}
+ .openFull {{ color:var(--accent); text-decoration:none; font-weight:650; }}
+ .openFull:hover {{ text-decoration:underline; }}
+ @media (max-width: 1050px) {{
+   .pageHead {{ align-items:flex-start; flex-direction:column; }}
+   .inspectionLayout {{ grid-template-columns:1fr; }}
+   .inspectionMapFrame {{ max-height:78vh; }}
+ }}
+ @media (max-width: 620px) {{
+   body {{ padding:10px; }}
+   .inspectionBar {{ align-items:stretch; }}
+   .inspectionBar input, .inspectionBar select {{ width:100%; }}
+   .inspectionCounter {{ width:100%; margin-left:0; }}
+   .detailGrid, .inspectionPhotos {{ grid-template-columns:1fr; }}
+ }}
  @media (prefers-color-scheme: dark) {{
    .bar select, .bar button {{ background: #23232a; border-color: #3a3a42; }}
  }}
  @media (prefers-color-scheme: dark) {{
-   body {{ background: #16161a; color: #eceae5; }}
-   thead th {{ background: #16161a; border-bottom-color: #3a3a42; }}
+   :root {{ --paper:#151915; --panel:#1d221e; --ink:#eef1ec; --muted:#aab3aa;
+            --line:#394139; --accentSoft:#45271f; --goodSoft:#1c3b2c; --warnSoft:#40351c; }}
+   body {{ background: var(--paper); color: var(--ink); }}
+   thead th {{ background: var(--paper); border-bottom-color: #3a3a42; }}
    th, td {{ border-bottom-color: #2a2a30; }}
    .sub, td.info div {{ color: #9a9a94; }}
  }}
-</style>""".format(title=html.escape(title), sat=170, photo=170, photoh=128)
+ </style></head><body><main class="pageShell">""".format(
+        title=html.escape(title), sat=170, photo=170, photoh=128)
 
     columns = list(gdf.columns)
     id_field = find_field(columns, "habitat_id")
@@ -566,6 +867,13 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
     info_fields = [(label, field) for label, field in info_fields if field]
 
     rows = []
+    inspection_records = []
+    normalized_ids = (
+        gdf[id_field].map(normalize_site_id) if id_field
+        else gdf.index.to_series().astype(str)
+    )
+    id_totals = normalized_ids.value_counts().to_dict()
+    id_seen = {}
     for position, (_, row) in enumerate(gdf.iterrows()):
         cells = []
 
@@ -589,9 +897,11 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
             f'alt="satellite patch" loading="lazy"></a></div></td>'
         )
 
+        record_photos = []
         for label, field in photo_columns:
             src = photo_src(row, field)
             if src:
+                record_photos.append({"label": str(label), "src": str(src)})
                 cells.append(
                     f'<td><a class="zoom" href="{html.escape(src)}" target="_blank">'
                     f'<img class="photo" src="{html.escape(src)}" '
@@ -613,6 +923,106 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
             + "".join(cells) + "</tr>"
         )
 
+        def _text(value):
+            if value is None or str(value) in ("", "nan", "<NA>", "NaT"):
+                return ""
+            return str(value)
+
+        site_id = _text(row.get(id_field) if id_field else "")
+        normalized_id = normalize_site_id(site_id)
+        id_seen[normalized_id] = id_seen.get(normalized_id, 0) + 1
+        repeated_total = int(id_totals.get(normalized_id, 1))
+        repeated_index = id_seen[normalized_id]
+        display_site_id = (
+            f"{site_id} ({repeated_index} of {repeated_total})"
+            if repeated_total > 1 else site_id
+        )
+        observed = _text(row.get("field_observed_habitat")) or display_habitat(
+            row.get(type_field) if type_field else None
+        ) or ""
+        detected = _text(row.get("imagery_detected_habitat"))
+        comparison = _text(row.get("detection_field_comparison"))
+        is_new = normalize_site_id(site_id).startswith(("X", "Y"))
+        count_value = row.get(count_field) if count_field else None
+        try:
+            larvae = int(float(count_value)) if _text(count_value) else 0
+        except (TypeError, ValueError):
+            larvae = 0
+        offset_value = row.get("detection_centroid_offset_m")
+        try:
+            offset = float(offset_value) if np.isfinite(float(offset_value)) else None
+        except (TypeError, ValueError):
+            offset = None
+        direction = _text(row.get("detection_centroid_direction"))
+        view_note = _text(row.get("detection_centroid_view_note"))
+
+        accuracy_field = find_field(columns, "enter_gps_accuracy")
+        accuracy = _text(row.get(accuracy_field)) if accuracy_field else ""
+        survey_details = [
+            {"label": "Field observed habitat", "value": observed},
+            {"label": "An. stephensi larvae", "value": str(larvae)},
+            {"label": "GPS accuracy", "value": f"{accuracy} m" if accuracy else ""},
+            {"label": "Recorded", "value": _text(row.get("created_at"))[:16]},
+            {"label": "Uploaded", "value": _text(row.get("uploaded_at"))[:16]},
+        ]
+        if repeated_total > 1:
+            survey_details.insert(0, {
+                "label": "Repeated habitat ID",
+                "value": f"Record {repeated_index} of {repeated_total}",
+            })
+        survey_details = [item for item in survey_details if item["value"]]
+
+        if is_new:
+            join_status = "New site"
+            tone = "toneNew"
+            join_details = [{
+                "label": "Imagery comparison",
+                "value": "Not shown for new sites",
+                "tone": "toneNew",
+            }]
+        elif not detected:
+            join_status = "No ID match"
+            tone = "toneUnmatched"
+            join_details = [{
+                "label": "ID join",
+                "value": "No imagery detection with this ID",
+                "tone": "toneUnmatched",
+            }]
+        else:
+            join_status = comparison or "ID matched"
+            tone = {
+                "Match": "toneMatch",
+                "Mismatch": "toneMismatch",
+                "Field-rejected detection": "toneRejected",
+            }.get(comparison, "")
+            offset_text = ""
+            if offset is not None:
+                offset_text = f"{offset:.1f} m" + (f" {direction}" if direction else "")
+            join_details = [
+                {"label": "Imagery detected habitat", "value": detected},
+                {"label": "Field comparison", "value": comparison or "ID matched", "tone": tone},
+                {"label": "Detection centroid offset", "value": offset_text,
+                 "tone": "toneOffset" if offset is not None and offset > 10 else ""},
+                {"label": "Satellite view", "value": view_note,
+                 "tone": "toneOffset" if view_note else ""},
+            ]
+            join_details = [item for item in join_details if item["value"]]
+
+        inspection_records.append({
+            "id": display_site_id,
+            "rawId": site_id,
+            "patch": patch_uri,
+            "status": join_status,
+            "tone": tone,
+            "comparison": comparison,
+            "offset": offset,
+            "larvae": larvae,
+            "isNew": is_new,
+            "survey": survey_details,
+            "join": join_details,
+            "photos": record_photos,
+        })
+
     header = ["Site", f"Satellite<br><span style='font-weight:400;color:#6b6b66'>"
                       f"{patch_metres:g} x {patch_metres:g} m</span>"]
     header += [label for label, _ in photo_columns]
@@ -633,14 +1043,98 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
     else:
         cross_note = "The red cross marks the recorded coordinate."
 
-    return (head + f"\n<h1>{html.escape(title)}</h1>\n"
-            f'<div class="sub">{len(gdf)} sites. Satellite patches are '
-            f"{patch_metres} m across. "
-            f"{cross_note} Click a photo to open it full size.</div>\n"
-            + TOOLBAR
-            + "<table><thead><tr>"
-            + "".join(f"<th>{h}</th>" for h in header)
-            + "</tr></thead><tbody>\n" + "\n".join(rows) + "\n</tbody></table>\n")
+    inspection_json = json.dumps(
+        inspection_records, ensure_ascii=False, separators=(",", ":")
+    ).replace("<", "\\u003c")
+    inspection_markup = f"""
+<section id="inspection" class="view" hidden aria-label="Record inspection">
+  <div class="inspectionBar">
+    <button id="inspectionPrevious" type="button" aria-label="Previous record">Previous</button>
+    <button id="inspectionNext" type="button" aria-label="Next record">Next</button>
+    <label for="inspectionRecord">Site</label>
+    <input id="inspectionRecord" list="inspectionRecordList" autocomplete="off"
+           placeholder="Enter a habitat ID">
+    <datalist id="inspectionRecordList"></datalist>
+    <label for="inspectionFilter">Show</label>
+    <select id="inspectionFilter">
+      <option value="all">All records</option>
+      <option value="mismatch">Category mismatch</option>
+      <option value="rejected">Field rejected detection</option>
+      <option value="unmatched">No ID match</option>
+      <option value="offset">Offset above 10 m</option>
+      <option value="new">New sites</option>
+      <option value="positive">Larvae positive</option>
+    </select>
+    <span id="inspectionCounter" class="inspectionCounter"></span>
+  </div>
+  <div id="inspectionEmpty" class="inspectionEmpty" hidden>No records match this view.</div>
+  <div id="inspectionContent" class="inspectionLayout">
+    <section class="mapPanel" aria-label="Satellite image">
+      <div class="panelHead">
+        <h2>Satellite image</h2>
+        <a id="inspectionSatelliteLink" class="openFull" target="_blank" rel="noopener">Open image</a>
+      </div>
+      <div id="inspectionMapFrame" class="inspectionMapFrame">
+        <img id="inspectionSatellite" alt="">
+      </div>
+      <div class="mapFooter">
+        <span>{patch_metres:g} by {patch_metres:g} m at native imagery resolution</span>
+        <div class="zoomControls" aria-label="Satellite zoom controls">
+          <button id="inspectionZoomOut" type="button" aria-label="Zoom out">−</button>
+          <span id="inspectionZoomValue" class="zoomValue">100%</span>
+          <button id="inspectionZoomIn" type="button" aria-label="Zoom in">+</button>
+          <button id="inspectionZoomReset" type="button">Fit</button>
+        </div>
+      </div>
+    </section>
+    <div class="rightColumn">
+      <section class="auditPanel" aria-label="Survey and ID join information">
+        <div class="auditBody">
+          <div class="recordTop">
+            <h2 id="inspectionSiteId"></h2>
+            <span id="inspectionStatus" class="statusBadge"></span>
+          </div>
+          <div class="detailSection">
+            <h3>Survey information</h3>
+            <div id="inspectionDetails" class="detailGrid"></div>
+          </div>
+          <div class="detailSection">
+            <h3>ID join audit</h3>
+            <div id="inspectionJoin" class="detailGrid"></div>
+          </div>
+        </div>
+      </section>
+      <section class="photoPanel" aria-label="Site photos">
+        <div class="panelHead">
+          <h3>Site photos</h3>
+          <span id="inspectionPhotoCount" class="inspectionCounter"></span>
+        </div>
+        <div id="inspectionPhotos" class="inspectionPhotos"></div>
+      </section>
+    </div>
+  </div>
+</section>
+<script id="inspectionData" type="application/json">{inspection_json}</script>
+"""
+    return (
+        head
+        + '<header class="pageHead"><div>'
+        + f"<h1>{html.escape(title)}</h1>"
+        + f'<div class="sub">{len(gdf)} sites. Satellite patches are '
+          f"{patch_metres:g} m across. {cross_note} Click any image to open it full size.</div>"
+        + '</div><nav class="tabs" role="tablist" aria-label="Site views">'
+          '<button class="tabButton" data-view="gallery" role="tab" aria-selected="true">Gallery</button>'
+          '<button class="tabButton" data-view="inspection" role="tab" aria-selected="false">Inspection</button>'
+          '</nav></header>'
+        + '<section id="gallery" class="view" aria-label="Gallery">'
+        + TOOLBAR
+        + "<table><thead><tr>"
+        + "".join(f"<th>{h}</th>" for h in header)
+        + "</tr></thead><tbody>\n" + "\n".join(rows) + "\n</tbody></table></section>\n"
+        + inspection_markup
+        + INSPECTION_SCRIPT
+        + "</main></body></html>"
+    )
 
 
 def main(argv=None):
@@ -834,8 +1328,29 @@ def main(argv=None):
         for i, patch in enumerate(patches):
             key = str(gdf.iloc[i].get("ec5_uuid") or f"site{i:04d}")
             name = f"{key}.jpg"
-            Image.fromarray(patch).save(folder / name, format="JPEG", quality=88,
+            path = folder / name
+            buffer = io.BytesIO()
+            Image.fromarray(patch).save(buffer, format="JPEG", quality=88,
                                         subsampling=0, optimize=True)
+            candidate = buffer.getvalue()
+            keep_existing = False
+            if path.exists():
+                if path.read_bytes() == candidate:
+                    keep_existing = True
+                else:
+                    # JPEG optimization can produce different bytes across
+                    # library versions even when the decoded pixels are equal.
+                    # Preserve the existing file in that case so a site rebuild
+                    # does not create a large set of meaningless Git changes.
+                    with Image.open(path) as current, Image.open(io.BytesIO(candidate)) as new:
+                        keep_existing = np.array_equal(
+                            np.asarray(current.convert("RGB")),
+                            np.asarray(new.convert("RGB")),
+                        )
+            if not keep_existing:
+                temp = path.with_name(path.name + ".part")
+                temp.write_bytes(candidate)
+                temp.replace(path)
             names.append(prefix + name)
         if args.clean_patch_dir:
             expected_names = {name.rsplit("/", 1)[-1] for name in names}
