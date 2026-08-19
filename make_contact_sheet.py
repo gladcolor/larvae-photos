@@ -524,7 +524,10 @@ document.addEventListener("DOMContentLoaded", function () {
   var next = document.getElementById("inspectionNext");
   var siteId = document.getElementById("inspectionSiteId");
   var status = document.getElementById("inspectionStatus");
+  var fieldClass = document.getElementById("inspectionFieldClass");
+  var imageClass = document.getElementById("inspectionImageClass");
   var details = document.getElementById("inspectionDetails");
+  var joinSection = document.getElementById("inspectionJoinSection");
   var joinDetails = document.getElementById("inspectionJoin");
   var satellite = document.getElementById("inspectionSatellite");
   var satelliteLink = document.getElementById("inspectionSatelliteLink");
@@ -578,6 +581,8 @@ document.addEventListener("DOMContentLoaded", function () {
     siteId.textContent = "Site " + record.id;
     status.textContent = record.status;
     status.className = "statusBadge " + record.tone;
+    fieldClass.textContent = record.fieldClass || "Not recorded";
+    imageClass.textContent = record.imageClass || "No ID match";
 
     details.textContent = "";
     record.survey.forEach(function (item) {
@@ -588,6 +593,7 @@ document.addEventListener("DOMContentLoaded", function () {
     record.join.forEach(function (item) {
       addDetail(joinDetails, item.label, item.value, item.tone || "");
     });
+    joinSection.hidden = record.join.length === 0;
 
     satellite.src = record.patch;
     satellite.alt = "Satellite view for site " + record.id;
@@ -781,7 +787,7 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
  .inspectionBar button:hover, .zoomControls button:hover {{ border-color:var(--accent); }}
  .inspectionBar input {{ width:min(220px, 45vw); }}
  .inspectionCounter {{ margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }}
- .inspectionLayout {{ display:grid; grid-template-columns:minmax(480px, 1.3fr) minmax(390px, 1fr);
+ .inspectionLayout {{ display:grid; grid-template-columns:minmax(400px, .9fr) minmax(520px, 1.1fr);
                       gap:14px; align-items:start; }}
  .mapPanel, .auditPanel, .photoPanel {{ background:var(--panel); border:1px solid var(--line);
                                       border-radius:14px; overflow:hidden; box-shadow:0 8px 24px rgba(24,31,24,.06); }}
@@ -796,32 +802,41 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
  .zoomControls {{ display:flex; align-items:center; gap:6px; }}
  .zoomControls button {{ min-width:36px; padding:5px 9px; }}
  .zoomValue {{ min-width:48px; text-align:center; font-variant-numeric:tabular-nums; }}
- .rightColumn {{ display:grid; gap:14px; min-width:0; }}
- .auditBody {{ padding:14px; display:grid; gap:14px; }}
+ .rightColumn {{ display:grid; gap:10px; min-width:0; }}
+ .photoPanel {{ grid-column:1 / -1; }}
+ .auditBody {{ padding:10px 12px; display:grid; gap:9px; }}
  .recordTop {{ display:flex; align-items:center; justify-content:space-between; gap:10px; }}
- .recordTop h2 {{ margin:0; font-size:22px; }}
+ .recordTop h2 {{ margin:0; font-size:20px; }}
  .statusBadge {{ display:inline-flex; align-items:center; min-height:28px; padding:5px 9px;
                  border-radius:999px; font-size:12px; font-weight:750; background:#eceeea; }}
  .toneMatch {{ color:var(--good); background:var(--goodSoft); }}
  .toneMismatch, .toneRejected, .toneOffset {{ color:var(--accent); background:var(--accentSoft); }}
  .toneNew, .toneUnmatched {{ color:var(--warn); background:var(--warnSoft); }}
- .detailSection h3 {{ font-size:12px; letter-spacing:.08em; text-transform:uppercase;
-                      color:var(--muted); margin:0 0 8px; }}
- .detailGrid {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }}
- .detailItem {{ min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:9px;
+ .classificationStrip {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }}
+ .classificationCard {{ min-width:0; padding:9px 11px; border:1px solid var(--line);
+                        border-radius:10px; background:color-mix(in srgb, var(--paper) 55%, var(--panel)); }}
+ .classificationCard.field {{ border-color:#8ab49c; background:var(--goodSoft); }}
+ .classificationCard.image {{ border-color:#dbac7f; background:var(--warnSoft); }}
+ .classificationLabel {{ display:block; color:var(--muted); font-size:11px; font-weight:700;
+                         letter-spacing:.06em; text-transform:uppercase; margin-bottom:3px; }}
+ .classificationCard strong {{ display:block; font-size:17px; line-height:1.2; overflow-wrap:anywhere; }}
+ .detailSection h3 {{ font-size:11px; letter-spacing:.08em; text-transform:uppercase;
+                      color:var(--muted); margin:0 0 5px; }}
+ .detailGrid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }}
+ .detailItem {{ min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:8px;
                 background:color-mix(in srgb, var(--paper) 55%, var(--panel)); }}
  .detailItem.toneOffset, .detailItem.toneMismatch, .detailItem.toneRejected {{ border-color:#df9f8e; }}
  .detailLabel {{ display:block; color:var(--muted); font-size:11px; margin-bottom:2px; }}
  .detailItem strong {{ display:block; overflow-wrap:anywhere; font-size:13px; }}
- .inspectionPhotos {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;
-                      padding:12px; }}
+ .inspectionPhotos {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px;
+                      padding:9px; }}
  .inspectionPhoto {{ margin:0; min-width:0; border:1px solid var(--line); border-radius:10px;
                      overflow:hidden; background:var(--paper); }}
  .inspectionPhoto a {{ display:block; background:#151a16; }}
  .inspectionPhoto img {{ width:100%; height:auto; aspect-ratio:4/3; object-fit:contain;
                          border-radius:0; transition:opacity .18s ease; }}
  .inspectionPhoto a:hover img {{ opacity:.88; }}
- .inspectionPhoto figcaption {{ padding:7px 9px; color:var(--muted); font-size:12px; }}
+ .inspectionPhoto figcaption {{ padding:5px 7px; color:var(--muted); font-size:11px; }}
  .inspectionNoPhotos, .inspectionEmpty {{ padding:34px; text-align:center; color:var(--muted); }}
  .inspectionEmpty {{ border:1px solid var(--line); border-radius:12px; background:var(--panel); }}
  .openFull {{ color:var(--accent); text-decoration:none; font-weight:650; }}
@@ -830,6 +845,7 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
    .pageHead {{ align-items:flex-start; flex-direction:column; }}
    .inspectionLayout {{ grid-template-columns:1fr; }}
    .inspectionMapFrame {{ max-height:78vh; }}
+   .detailGrid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
  }}
  @media (max-width: 620px) {{
    body {{ padding:10px; }}
@@ -959,7 +975,6 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
         accuracy_field = find_field(columns, "enter_gps_accuracy")
         accuracy = _text(row.get(accuracy_field)) if accuracy_field else ""
         survey_details = [
-            {"label": "Field observed habitat", "value": observed},
             {"label": "An. stephensi larvae", "value": str(larvae)},
             {"label": "GPS accuracy", "value": f"{accuracy} m" if accuracy else ""},
             {"label": "Recorded", "value": _text(row.get("created_at"))[:16]},
@@ -975,21 +990,16 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
         if is_new:
             join_status = "New site"
             tone = "toneNew"
-            join_details = [{
-                "label": "Imagery comparison",
-                "value": "Not shown for new sites",
-                "tone": "toneNew",
-            }]
+            image_class = "Not shown for new site"
+            join_details = []
         elif not detected:
             join_status = "No ID match"
             tone = "toneUnmatched"
-            join_details = [{
-                "label": "ID join",
-                "value": "No imagery detection with this ID",
-                "tone": "toneUnmatched",
-            }]
+            image_class = "No ID match"
+            join_details = []
         else:
             join_status = comparison or "ID matched"
+            image_class = detected
             tone = {
                 "Match": "toneMatch",
                 "Mismatch": "toneMismatch",
@@ -999,8 +1009,6 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
             if offset is not None:
                 offset_text = f"{offset:.1f} m" + (f" {direction}" if direction else "")
             join_details = [
-                {"label": "Imagery detected habitat", "value": detected},
-                {"label": "Field comparison", "value": comparison or "ID matched", "tone": tone},
                 {"label": "Detection centroid offset", "value": offset_text,
                  "tone": "toneOffset" if offset is not None and offset > 10 else ""},
                 {"label": "Satellite view", "value": view_note,
@@ -1014,6 +1022,8 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
             "patch": patch_uri,
             "status": join_status,
             "tone": tone,
+            "fieldClass": observed,
+            "imageClass": image_class,
             "comparison": comparison,
             "offset": offset,
             "larvae": larvae,
@@ -1094,24 +1104,34 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
             <h2 id="inspectionSiteId"></h2>
             <span id="inspectionStatus" class="statusBadge"></span>
           </div>
+          <div class="classificationStrip" aria-label="Field and image classification">
+            <div class="classificationCard field">
+              <span class="classificationLabel">Field classification</span>
+              <strong id="inspectionFieldClass"></strong>
+            </div>
+            <div class="classificationCard image">
+              <span class="classificationLabel">Image classification</span>
+              <strong id="inspectionImageClass"></strong>
+            </div>
+          </div>
           <div class="detailSection">
             <h3>Survey information</h3>
             <div id="inspectionDetails" class="detailGrid"></div>
           </div>
-          <div class="detailSection">
+          <div id="inspectionJoinSection" class="detailSection">
             <h3>ID join audit</h3>
             <div id="inspectionJoin" class="detailGrid"></div>
           </div>
         </div>
       </section>
-      <section class="photoPanel" aria-label="Site photos">
-        <div class="panelHead">
-          <h3>Site photos</h3>
-          <span id="inspectionPhotoCount" class="inspectionCounter"></span>
-        </div>
-        <div id="inspectionPhotos" class="inspectionPhotos"></div>
-      </section>
     </div>
+    <section class="photoPanel" aria-label="Site photos">
+      <div class="panelHead">
+        <h3>Site photos</h3>
+        <span id="inspectionPhotoCount" class="inspectionCounter"></span>
+      </div>
+      <div id="inspectionPhotos" class="inspectionPhotos"></div>
+    </section>
   </div>
 </section>
 <script id="inspectionData" type="application/json">{inspection_json}</script>
