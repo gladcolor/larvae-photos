@@ -814,6 +814,7 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
  .classHeading.field strong {{ color:var(--good); }}
  .mapPanel .classHeading.image {{ justify-content:flex-end; text-align:right; }}
  .photoPanel .classHeading.field {{ justify-content:flex-start; text-align:left; }}
+ .photoPanel .classHeading.field strong {{ order:-1; }}
  .panelMeta {{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }}
  .inspectionMapFrame {{ width:100%; min-height:0; overflow:auto; background:#161b17;
                         display:block; scrollbar-color:#7c867d #242b25; }}
