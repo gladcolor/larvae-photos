@@ -522,13 +522,9 @@ document.addEventListener("DOMContentLoaded", function () {
   var counter = document.getElementById("inspectionCounter");
   var previous = document.getElementById("inspectionPrevious");
   var next = document.getElementById("inspectionNext");
-  var siteId = document.getElementById("inspectionSiteId");
-  var status = document.getElementById("inspectionStatus");
   var fieldClass = document.getElementById("inspectionFieldClass");
   var imageClass = document.getElementById("inspectionImageClass");
-  var details = document.getElementById("inspectionDetails");
-  var joinSection = document.getElementById("inspectionJoinSection");
-  var joinDetails = document.getElementById("inspectionJoin");
+  var infoTable = document.getElementById("inspectionInfo");
   var satellite = document.getElementById("inspectionSatellite");
   var satelliteLink = document.getElementById("inspectionSatelliteLink");
   var mapFrame = document.getElementById("inspectionMapFrame");
@@ -538,23 +534,42 @@ document.addEventListener("DOMContentLoaded", function () {
   var empty = document.getElementById("inspectionEmpty");
   var content = document.getElementById("inspectionContent");
 
-  function addDetail(container, label, value, tone) {
-    if (value === null || value === undefined || value === "") return;
-    var item = document.createElement("div");
-    item.className = "detailItem" + (tone ? " " + tone : "");
-    var key = document.createElement("span");
-    key.className = "detailLabel";
-    key.textContent = label;
-    var text = document.createElement("strong");
-    text.textContent = value;
-    item.appendChild(key);
-    item.appendChild(text);
-    container.appendChild(item);
+  function addInfoPair(row, item) {
+    var label = document.createElement("th");
+    var value = document.createElement("td");
+    if (item) {
+      label.scope = "row";
+      label.textContent = item.label;
+      value.textContent = item.value;
+      if (item.tone) value.className = item.tone;
+    }
+    row.appendChild(label);
+    row.appendChild(value);
+  }
+
+  function renderInfo(items) {
+    infoTable.textContent = "";
+    for (var index = 0; index < items.length; index += 2) {
+      var row = document.createElement("tr");
+      addInfoPair(row, items[index]);
+      addInfoPair(row, items[index + 1]);
+      infoTable.appendChild(row);
+    }
+  }
+
+  function fitInspection() {
+    if (inspection.hidden || window.innerWidth <= 1050) {
+      content.style.height = "";
+      return;
+    }
+    var available = window.innerHeight - content.getBoundingClientRect().top - 8;
+    content.style.height = Math.max(320, available) + "px";
   }
 
   function setZoom(nextZoom) {
     zoom = Math.max(1, Math.min(4, nextZoom));
     satellite.style.width = (zoom * 100) + "%";
+    satellite.style.height = (zoom * 100) + "%";
     satellite.style.maxWidth = "none";
     zoomValue.textContent = Math.round(zoom * 100) + "%";
     if (zoom === 1) {
@@ -578,22 +593,12 @@ document.addEventListener("DOMContentLoaded", function () {
     var record = visible[position];
     counter.textContent = (position + 1) + " of " + visible.length;
     recordInput.value = record.id;
-    siteId.textContent = "Site " + record.id;
-    status.textContent = record.status;
-    status.className = "statusBadge " + record.tone;
     fieldClass.textContent = record.fieldClass || "Not recorded";
     imageClass.textContent = record.imageClass || "No ID match";
-
-    details.textContent = "";
-    record.survey.forEach(function (item) {
-      addDetail(details, item.label, item.value);
-    });
-
-    joinDetails.textContent = "";
-    record.join.forEach(function (item) {
-      addDetail(joinDetails, item.label, item.value, item.tone || "");
-    });
-    joinSection.hidden = record.join.length === 0;
+    renderInfo([
+      {label: "Site", value: record.id},
+      {label: "Comparison", value: record.status, tone: record.tone}
+    ].concat(record.survey, record.join));
 
     satellite.src = record.patch;
     satellite.alt = "Satellite view for site " + record.id;
@@ -601,6 +606,7 @@ document.addEventListener("DOMContentLoaded", function () {
     setZoom(1);
 
     photoGrid.textContent = "";
+    photoGrid.dataset.count = String(record.photos.length);
     photoCount.textContent = record.photos.length +
       (record.photos.length === 1 ? " photo" : " photos");
     if (!record.photos.length) {
@@ -633,7 +639,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (value === "all") return true;
     if (value === "mismatch") return record.comparison === "Mismatch";
     if (value === "rejected") return record.comparison === "Field-rejected detection";
-    if (value === "unmatched") return record.comparison === "No detection ID match";
+    if (value === "unmatched") return record.status === "No ID match";
     if (value === "offset") return record.offset !== null && record.offset > 10;
     if (value === "new") return record.isNew;
     if (value === "positive") return record.larvae > 0;
@@ -675,12 +681,16 @@ document.addEventListener("DOMContentLoaded", function () {
     var inspect = name === "inspection";
     gallery.hidden = inspect;
     inspection.hidden = !inspect;
+    document.body.classList.toggle("inspectionActive", inspect);
     tabButtons.forEach(function (button) {
       var active = button.dataset.view === name;
       button.setAttribute("aria-selected", String(active));
       button.tabIndex = active ? 0 : -1;
     });
-    if (inspect) render();
+    if (inspect) {
+      render();
+      window.requestAnimationFrame(fitInspection);
+    }
     if (window.location.hash !== "#" + name) {
       history.replaceState(null, "", "#" + name);
     }
@@ -710,6 +720,7 @@ document.addEventListener("DOMContentLoaded", function () {
     event.preventDefault();
     setZoom(zoom + (event.deltaY < 0 ? 0.25 : -0.25));
   }, {passive: false});
+  window.addEventListener("resize", fitInspection);
   document.addEventListener("keydown", function (event) {
     if (inspection.hidden) return;
     var tag = document.activeElement ? document.activeElement.tagName : "";
@@ -787,72 +798,88 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
  .inspectionBar button:hover, .zoomControls button:hover {{ border-color:var(--accent); }}
  .inspectionBar input {{ width:min(220px, 45vw); }}
  .inspectionCounter {{ margin-left:auto; color:var(--muted); font-variant-numeric:tabular-nums; }}
- .inspectionLayout {{ display:grid; grid-template-columns:minmax(400px, .9fr) minmax(520px, 1.1fr);
-                      gap:14px; align-items:start; }}
- .mapPanel, .auditPanel, .photoPanel {{ background:var(--panel); border:1px solid var(--line);
-                                      border-radius:14px; overflow:hidden; box-shadow:0 8px 24px rgba(24,31,24,.06); }}
+ .inspectionLayout {{ display:grid; grid-template-columns:minmax(360px, .9fr) minmax(560px, 1.1fr);
+                      gap:10px; align-items:stretch; min-height:0; }}
+ .mapPanel, .photoPanel {{ min-height:0; background:var(--panel); border:1px solid var(--line);
+                          border-radius:12px; overflow:hidden; box-shadow:0 8px 24px rgba(24,31,24,.06); }}
+ .mapPanel {{ display:grid; grid-template-rows:auto minmax(0,1fr) auto; }}
+ .photoPanel {{ display:grid; grid-template-rows:auto auto minmax(0,1fr); }}
  .panelHead {{ display:flex; align-items:center; justify-content:space-between; gap:12px;
-               padding:12px 14px; border-bottom:1px solid var(--line); }}
- .panelHead h2, .panelHead h3 {{ margin:0; font-size:16px; }}
- .inspectionMapFrame {{ aspect-ratio:1; width:100%; overflow:auto; background:#161b17;
+               padding:7px 10px; border-bottom:1px solid var(--line); }}
+ .classHeading {{ min-width:0; display:flex; align-items:baseline; gap:8px; }}
+ .classHeading span {{ color:var(--muted); font-size:10px; font-weight:750;
+                       letter-spacing:.07em; text-transform:uppercase; white-space:nowrap; }}
+ .classHeading strong {{ min-width:0; font-size:17px; line-height:1.1; overflow-wrap:anywhere; }}
+ .classHeading.image strong {{ color:var(--warn); }}
+ .classHeading.field strong {{ color:var(--good); }}
+ .panelMeta {{ display:flex; align-items:center; gap:10px; flex:0 0 auto; }}
+ .inspectionMapFrame {{ width:100%; min-height:0; overflow:auto; background:#161b17;
                         display:block; scrollbar-color:#7c867d #242b25; }}
- .inspectionMapFrame img {{ display:block; width:100%; height:auto; min-width:100%; border-radius:0; }}
+ .inspectionMapFrame img {{ display:block; width:100%; height:100%; object-fit:contain;
+                            min-width:100%; border-radius:0; }}
  .mapFooter {{ display:flex; align-items:center; justify-content:space-between; gap:12px;
-               padding:10px 12px; color:var(--muted); }}
+               padding:5px 8px; color:var(--muted); font-size:10px; }}
  .zoomControls {{ display:flex; align-items:center; gap:6px; }}
- .zoomControls button {{ min-width:36px; padding:5px 9px; }}
- .zoomValue {{ min-width:48px; text-align:center; font-variant-numeric:tabular-nums; }}
- .rightColumn {{ display:grid; gap:10px; min-width:0; }}
- .photoPanel {{ grid-column:1 / -1; }}
- .auditBody {{ padding:10px 12px; display:grid; gap:9px; }}
- .recordTop {{ display:flex; align-items:center; justify-content:space-between; gap:10px; }}
- .recordTop h2 {{ margin:0; font-size:20px; }}
- .statusBadge {{ display:inline-flex; align-items:center; min-height:28px; padding:5px 9px;
-                 border-radius:999px; font-size:12px; font-weight:750; background:#eceeea; }}
+ .zoomControls button {{ min-width:30px; min-height:28px; padding:3px 7px; }}
+ .zoomValue {{ min-width:42px; text-align:center; font-variant-numeric:tabular-nums; }}
  .toneMatch {{ color:var(--good); background:var(--goodSoft); }}
  .toneMismatch, .toneRejected, .toneOffset {{ color:var(--accent); background:var(--accentSoft); }}
  .toneNew, .toneUnmatched {{ color:var(--warn); background:var(--warnSoft); }}
- .classificationStrip {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }}
- .classificationCard {{ min-width:0; padding:9px 11px; border:1px solid var(--line);
-                        border-radius:10px; background:color-mix(in srgb, var(--paper) 55%, var(--panel)); }}
- .classificationCard.field {{ border-color:#8ab49c; background:var(--goodSoft); }}
- .classificationCard.image {{ border-color:#dbac7f; background:var(--warnSoft); }}
- .classificationLabel {{ display:block; color:var(--muted); font-size:11px; font-weight:700;
-                         letter-spacing:.06em; text-transform:uppercase; margin-bottom:3px; }}
- .classificationCard strong {{ display:block; font-size:17px; line-height:1.2; overflow-wrap:anywhere; }}
- .detailSection h3 {{ font-size:11px; letter-spacing:.08em; text-transform:uppercase;
-                      color:var(--muted); margin:0 0 5px; }}
- .detailGrid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }}
- .detailItem {{ min-width:0; padding:6px 8px; border:1px solid var(--line); border-radius:8px;
-                background:color-mix(in srgb, var(--paper) 55%, var(--panel)); }}
- .detailItem.toneOffset, .detailItem.toneMismatch, .detailItem.toneRejected {{ border-color:#df9f8e; }}
- .detailLabel {{ display:block; color:var(--muted); font-size:11px; margin-bottom:2px; }}
- .detailItem strong {{ display:block; overflow-wrap:anywhere; font-size:13px; }}
- .inspectionPhotos {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px;
-                      padding:9px; }}
- .inspectionPhoto {{ margin:0; min-width:0; border:1px solid var(--line); border-radius:10px;
-                     overflow:hidden; background:var(--paper); }}
- .inspectionPhoto a {{ display:block; background:#151a16; }}
- .inspectionPhoto img {{ width:100%; height:auto; aspect-ratio:4/3; object-fit:contain;
+ .compactInfoWrap {{ padding:4px 7px 3px; border-bottom:1px solid var(--line); }}
+ .compactInfo {{ table-layout:fixed; font-size:10px; line-height:1.15; }}
+ .compactInfo th, .compactInfo td {{ position:static; padding:3px 5px; border-bottom:1px solid var(--line);
+                                    vertical-align:middle; overflow-wrap:anywhere; }}
+ .compactInfo tr:last-child th, .compactInfo tr:last-child td {{ border-bottom:0; }}
+ .compactInfo th {{ width:13%; color:var(--muted); background:transparent; font-weight:650; text-align:left; }}
+ .compactInfo td {{ width:37%; font-weight:700; }}
+ .inspectionPhotos {{ min-height:0; overflow:hidden; display:grid;
+                      grid-template-columns:repeat(3,minmax(0,1fr));
+                      grid-template-rows:repeat(2,minmax(0,1fr)); gap:6px; padding:6px; }}
+ .inspectionPhotos[data-count="1"] {{ grid-template-columns:1fr; grid-template-rows:1fr; }}
+ .inspectionPhotos[data-count="2"] {{ grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:1fr; }}
+ .inspectionPhotos[data-count="4"] {{ grid-template-columns:repeat(2,minmax(0,1fr));
+                                       grid-template-rows:repeat(2,minmax(0,1fr)); }}
+ .inspectionPhoto {{ margin:0; min-width:0; min-height:0; display:grid;
+                     grid-template-rows:minmax(0,1fr) auto; border:1px solid var(--line);
+                     border-radius:8px; overflow:hidden; background:var(--paper); }}
+ .inspectionPhoto a {{ display:block; min-height:0; height:100%; background:#151a16; }}
+ .inspectionPhoto img {{ width:100%; height:100%; object-fit:contain;
                          border-radius:0; transition:opacity .18s ease; }}
  .inspectionPhoto a:hover img {{ opacity:.88; }}
- .inspectionPhoto figcaption {{ padding:5px 7px; color:var(--muted); font-size:11px; }}
+ .inspectionPhoto figcaption {{ padding:2px 5px; color:var(--muted); font-size:9px; line-height:1.15; }}
  .inspectionNoPhotos, .inspectionEmpty {{ padding:34px; text-align:center; color:var(--muted); }}
  .inspectionEmpty {{ border:1px solid var(--line); border-radius:12px; background:var(--panel); }}
  .openFull {{ color:var(--accent); text-decoration:none; font-weight:650; }}
  .openFull:hover {{ text-decoration:underline; }}
+ @media (min-width: 1051px) {{
+   body.inspectionActive {{ overflow:hidden; padding-top:10px; padding-bottom:8px; }}
+   body.inspectionActive .pageHead {{ align-items:center; margin-bottom:7px; }}
+   body.inspectionActive .pageHead h1 {{ margin:0; font-size:20px; }}
+   body.inspectionActive .sub {{ display:none; }}
+   body.inspectionActive .inspectionBar {{ padding:5px 7px; margin-bottom:7px; }}
+   body.inspectionActive .inspectionBar button,
+   body.inspectionActive .inspectionBar input,
+   body.inspectionActive .inspectionBar select {{ min-height:30px; padding:4px 8px; }}
+ }}
  @media (max-width: 1050px) {{
    .pageHead {{ align-items:flex-start; flex-direction:column; }}
-   .inspectionLayout {{ grid-template-columns:1fr; }}
-   .inspectionMapFrame {{ max-height:78vh; }}
-   .detailGrid {{ grid-template-columns:repeat(2,minmax(0,1fr)); }}
+   .inspectionLayout {{ grid-template-columns:1fr; height:auto !important; }}
+   .mapPanel, .photoPanel {{ display:block; }}
+   .inspectionMapFrame {{ aspect-ratio:1; max-height:78vh; }}
+   .inspectionMapFrame img {{ height:auto !important; }}
+   .inspectionPhotos {{ overflow:visible; grid-template-rows:auto; }}
+   .inspectionPhoto a {{ height:auto; }}
+   .inspectionPhoto img {{ height:auto; aspect-ratio:4/3; }}
  }}
  @media (max-width: 620px) {{
    body {{ padding:10px; }}
    .inspectionBar {{ align-items:stretch; }}
    .inspectionBar input, .inspectionBar select {{ width:100%; }}
    .inspectionCounter {{ width:100%; margin-left:0; }}
-   .detailGrid, .inspectionPhotos {{ grid-template-columns:1fr; }}
+   .inspectionPhotos {{ grid-template-columns:1fr; }}
+   .inspectionPhotos[data-count] {{ grid-template-columns:1fr; grid-template-rows:auto; }}
+   .compactInfo th {{ width:18%; }}
+   .compactInfo td {{ width:32%; }}
  }}
  @media (prefers-color-scheme: dark) {{
    .bar select, .bar button {{ background: #23232a; border-color: #3a3a42; }}
@@ -1081,8 +1108,14 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
   <div id="inspectionContent" class="inspectionLayout">
     <section class="mapPanel" aria-label="Satellite image">
       <div class="panelHead">
-        <h2>Satellite image</h2>
-        <a id="inspectionSatelliteLink" class="openFull" target="_blank" rel="noopener">Open image</a>
+        <div class="classHeading image">
+          <span>Image classification</span>
+          <strong id="inspectionImageClass"></strong>
+        </div>
+        <div class="panelMeta">
+          <span>Satellite image</span>
+          <a id="inspectionSatelliteLink" class="openFull" target="_blank" rel="noopener">Open image</a>
+        </div>
       </div>
       <div id="inspectionMapFrame" class="inspectionMapFrame">
         <img id="inspectionSatellite" alt="">
@@ -1097,38 +1130,19 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
         </div>
       </div>
     </section>
-    <div class="rightColumn">
-      <section class="auditPanel" aria-label="Survey and ID join information">
-        <div class="auditBody">
-          <div class="recordTop">
-            <h2 id="inspectionSiteId"></h2>
-            <span id="inspectionStatus" class="statusBadge"></span>
-          </div>
-          <div class="classificationStrip" aria-label="Field and image classification">
-            <div class="classificationCard field">
-              <span class="classificationLabel">Field classification</span>
-              <strong id="inspectionFieldClass"></strong>
-            </div>
-            <div class="classificationCard image">
-              <span class="classificationLabel">Image classification</span>
-              <strong id="inspectionImageClass"></strong>
-            </div>
-          </div>
-          <div class="detailSection">
-            <h3>Survey information</h3>
-            <div id="inspectionDetails" class="detailGrid"></div>
-          </div>
-          <div id="inspectionJoinSection" class="detailSection">
-            <h3>ID join audit</h3>
-            <div id="inspectionJoin" class="detailGrid"></div>
-          </div>
-        </div>
-      </section>
-    </div>
     <section class="photoPanel" aria-label="Site photos">
       <div class="panelHead">
-        <h3>Site photos</h3>
-        <span id="inspectionPhotoCount" class="inspectionCounter"></span>
+        <div class="classHeading field">
+          <span>Field classification</span>
+          <strong id="inspectionFieldClass"></strong>
+        </div>
+        <div class="panelMeta">
+          <span>Field photos</span>
+          <span id="inspectionPhotoCount" class="inspectionCounter"></span>
+        </div>
+      </div>
+      <div class="compactInfoWrap" aria-label="Site information">
+        <table class="compactInfo"><tbody id="inspectionInfo"></tbody></table>
       </div>
       <div id="inspectionPhotos" class="inspectionPhotos"></div>
     </section>
