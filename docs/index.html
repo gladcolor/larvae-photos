@@ -66,6 +66,8 @@
  .classHeading strong { min-width:0; font-size:17px; line-height:1.1; overflow-wrap:anywhere; }
  .classHeading.image strong { color:var(--warn); }
  .classHeading.field strong { color:var(--good); }
+ .mapPanel .classHeading.image { justify-content:flex-end; text-align:right; }
+ .photoPanel .classHeading.field { justify-content:flex-start; text-align:left; }
  .panelMeta { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
  .inspectionMapFrame { width:100%; min-height:0; overflow:auto; background:#161b17;
                         display:block; scrollbar-color:#7c867d #242b25; }
@@ -1249,13 +1251,13 @@ document.addEventListener("DOMContentLoaded", function () {
   <div id="inspectionContent" class="inspectionLayout">
     <section class="mapPanel" aria-label="Satellite image">
       <div class="panelHead">
-        <div class="classHeading image">
-          <span>Image classification</span>
-          <strong id="inspectionImageClass"></strong>
-        </div>
         <div class="panelMeta">
           <span>Satellite image</span>
           <a id="inspectionSatelliteLink" class="openFull" target="_blank" rel="noopener">Open image</a>
+        </div>
+        <div class="classHeading image">
+          <span>Image classification</span>
+          <strong id="inspectionImageClass"></strong>
         </div>
       </div>
       <div id="inspectionMapFrame" class="inspectionMapFrame">
