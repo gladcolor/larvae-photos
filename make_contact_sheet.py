@@ -458,18 +458,18 @@ TOOLBAR = """<div class="bar">
   <select id="sortkey">
     <option value="id">Habitat ID</option>
     <option value="type">Habitat type</option>
-    <option value="date">Date recorded</option>
+    <option value="date" selected>Date recorded</option>
     <option value="count">An. stephensi count</option>
   </select>
-  <button id="asc"  aria-pressed="true">Ascending</button>
-  <button id="desc" aria-pressed="false">Descending</button>
+  <button id="asc"  aria-pressed="false">Ascending</button>
+  <button id="desc" aria-pressed="true">Descending</button>
   <span class="count" id="rowcount"></span>
 </div>
 <script>
 document.addEventListener("DOMContentLoaded", function () {
   var tbody = document.querySelector("#gallery tbody");
   var rows = Array.prototype.slice.call(tbody.rows);
-  var key = "id", dir = "asc";
+  var key = "date", dir = "desc";
   document.getElementById("rowcount").textContent = rows.length + " sites";
 
   function sortRows() {
