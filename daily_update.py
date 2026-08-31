@@ -66,6 +66,12 @@ DETECTION_LAYER = (
     r"\Semera_Logiya_20260718_slipt_60m_detection_v2_dissolved.shp"
 )
 
+MISSED_DETECTION_GDB = (
+    r"D:\OneDrive_Emory\OneDrive - Emory\Research_doc\larvae\ArcGIS_pro"
+    r"\Larvae\Larvae.gdb"
+)
+MISSED_DETECTION_LAYER = "Semera_Logiya_missed_detection_20260718"
+
 STEPS = ("notebook", "patches", "publish")
 
 
@@ -293,6 +299,12 @@ def build_contact_sheet(patch_metres, cross_alpha, label_alpha):
     if not Path(RASTER).exists():
         log(f"  raster not found: {RASTER}")
         return False
+    if not Path(DETECTION_LAYER).exists():
+        log(f"  primary detection layer not found: {DETECTION_LAYER}")
+        return False
+    if not Path(MISSED_DETECTION_GDB).exists():
+        log(f"  missed-detection geodatabase not found: {MISSED_DETECTION_GDB}")
+        return False
 
     done = run([sys.executable, str(HERE / "make_contact_sheet.py"),
                 "--gpkg", str(gpkg),
@@ -300,6 +312,8 @@ def build_contact_sheet(patch_metres, cross_alpha, label_alpha):
                 "--photo-url-base", PHOTO_URL_BASE,
                 "--photo-root", str(HERE / "photos"),
                 "--detection-layer", DETECTION_LAYER,
+                "--additional-detection-layer", MISSED_DETECTION_GDB,
+                MISSED_DETECTION_LAYER,
                 "--hide-detection-for-id-prefix", "X", "Y",
                 "--patch-dir", str(HERE / "docs" / "patches"),
                 "--clean-patch-dir",

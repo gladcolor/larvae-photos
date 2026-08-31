@@ -120,6 +120,7 @@ def display_habitat(value):
         "birka-water": "Birka - with water",
         "birka - with water": "Birka - with water",
         "construction pit": "Construction pit",
+        "suspicious": "Suspicious",
         "not a habitat": "Not a habitat",
     }
     return mapping.get(text, str(value).strip() or None)
@@ -127,7 +128,8 @@ def display_habitat(value):
 
 def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
                              detection_type_field="class_name",
-                             hide_prefixes=("X", "Y")):
+                             hide_prefixes=("X", "Y"),
+                             additional_detection_layers=()):
     """ID-join imagery detections to field observations and add display fields.
 
     ``Not a habitat`` is a field rejection of an imagery detection, not a fourth
@@ -150,15 +152,61 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
               f"{', '.join(prefixes)}; imagery comparison hidden for those rows")
     joined["_new_field_site"] = is_new
 
-    detections = gpd.read_file(detection_path)
-    missing = [name for name in (detection_id_field, detection_type_field)
-               if name not in detections.columns]
-    if missing:
-        raise ValueError(f"detection layer is missing field(s): {', '.join(missing)}")
-    if detections.crs is None:
-        raise ValueError("detection layer has no CRS; cannot locate polygon centroids")
-    if detections.geometry.isna().any() or detections.geometry.is_empty.any():
-        raise ValueError("detection layer contains missing or empty geometries")
+    # Standardise and append every imagery-detection source before the ID join.
+    # The primary shapefile uses ``class_name``; the missed-detection FileGDB
+    # layer uses ``type`` and contains the N-prefixed manual image labels.
+    detection_specs = [(detection_path, None, detection_type_field)]
+    detection_specs.extend(
+        (path, layer, None) for path, layer in additional_detection_layers
+    )
+    detection_frames = []
+    target_crs = None
+    for source_path, source_layer, requested_type_field in detection_specs:
+        source = gpd.read_file(source_path, layer=source_layer)
+        type_candidates = [requested_type_field, "class_name", "type"]
+        source_type_field = next(
+            (name for name in type_candidates if name and name in source.columns),
+            None,
+        )
+        missing = [name for name in (detection_id_field,) if name not in source.columns]
+        if source_type_field is None:
+            missing.append(requested_type_field or "class_name/type")
+        if missing:
+            label = f"{source_path}:{source_layer}" if source_layer else str(source_path)
+            raise ValueError(
+                f"detection layer {label} is missing field(s): {', '.join(missing)}"
+            )
+        if source.crs is None:
+            raise ValueError(
+                f"detection layer {source_path} has no CRS; cannot locate polygon centroids"
+            )
+        bad_geometry = (
+            source.geometry.isna() | source.geometry.is_empty | ~source.geometry.is_valid
+        )
+        if bad_geometry.any():
+            raise ValueError(
+                f"detection layer {source_path} contains "
+                f"{int(bad_geometry.sum())} missing, empty, or invalid geometries"
+            )
+        if target_crs is None:
+            target_crs = source.crs
+        elif source.crs != target_crs:
+            source = source.to_crs(target_crs)
+        frame = source[[detection_id_field, source_type_field, "geometry"]].rename(
+            columns={
+                detection_id_field: "_detection_id",
+                source_type_field: "_detection_type",
+            }
+        )
+        detection_frames.append(frame)
+        source_label = source_layer or Path(source_path).name
+        print(f"loaded {len(frame)} imagery detection(s) from {source_label}")
+
+    detections = gpd.GeoDataFrame(
+        pd.concat(detection_frames, ignore_index=True),
+        geometry="geometry",
+        crs=target_crs,
+    )
 
     # Calculate the centre of each detection feature's bounding box in a
     # projected CRS, never directly in longitude/latitude. A dissolved feature
@@ -176,17 +224,17 @@ def add_detection_comparison(gdf, detection_path, detection_id_field="ID",
     detections["_centroid_longitude"] = centroid_wgs84.x.to_numpy()
     detections["_centroid_latitude"] = centroid_wgs84.y.to_numpy()
     detections = detections[[
-        detection_id_field, detection_type_field,
+        "_detection_id", "_detection_type",
         "_centroid_longitude", "_centroid_latitude",
     ]].copy()
-    detections["_comparison_id"] = detections[detection_id_field].map(normalize_site_id)
+    detections["_comparison_id"] = detections["_detection_id"].map(normalize_site_id)
     detections = detections[detections["_comparison_id"].ne("")]
     duplicates = detections["_comparison_id"].duplicated(keep=False)
     if duplicates.any():
         examples = ", ".join(detections.loc[duplicates, "_comparison_id"].head(5))
         raise ValueError(f"detection IDs are not unique; examples: {examples}")
 
-    detected_by_id = detections.set_index("_comparison_id")[detection_type_field]
+    detected_by_id = detections.set_index("_comparison_id")["_detection_type"]
     centroid_lon_by_id = detections.set_index("_comparison_id")["_centroid_longitude"]
     centroid_lat_by_id = detections.set_index("_comparison_id")["_centroid_latitude"]
     joined["field_observed_habitat"] = joined[field_type].map(display_habitat)
@@ -1228,6 +1276,12 @@ def main(argv=None):
     parser.add_argument("--detection-type-field", default="class_name",
                         help="habitat-class field in --detection-layer "
                              "(default: class_name)")
+    parser.add_argument(
+        "--additional-detection-layer", nargs=2, action="append", default=[],
+        metavar=("FILE", "LAYER"),
+        help="additional vector source and layer name to append before the ID join; "
+             "its class field is selected from class_name or type",
+    )
     parser.add_argument("--hide-detection-for-id-prefix", nargs="*",
                         default=["X", "Y"], metavar="PREFIX",
                         help="keep these new-site IDs but hide imagery-comparison "
@@ -1251,6 +1305,7 @@ def main(argv=None):
             detection_id_field=args.detection_id_field,
             detection_type_field=args.detection_type_field,
             hide_prefixes=args.hide_detection_for_id_prefix,
+            additional_detection_layers=args.additional_detection_layer,
         )
     sort_column = args.sort or find_field(list(gdf.columns), "habitat_id")
     if sort_column and sort_column in gdf.columns:
