@@ -571,6 +571,7 @@ document.addEventListener("DOMContentLoaded", function () {
   var previous = document.getElementById("inspectionPrevious");
   var next = document.getElementById("inspectionNext");
   var fieldClass = document.getElementById("inspectionFieldClass");
+  var imageClassLabel = document.getElementById("inspectionImageClassLabel");
   var imageClass = document.getElementById("inspectionImageClass");
   var infoTable = document.getElementById("inspectionInfo");
   var satellite = document.getElementById("inspectionSatellite");
@@ -642,11 +643,17 @@ document.addEventListener("DOMContentLoaded", function () {
     counter.textContent = (position + 1) + " of " + visible.length;
     recordInput.value = record.id;
     fieldClass.textContent = record.fieldClass || "Not recorded";
+    imageClassLabel.textContent = record.isManualImageLabel ?
+      "Manual image classification" : "Image classification";
     imageClass.textContent = record.imageClass || "No ID match";
-    renderInfo([
+    var summaryItems = [
       {label: "Site", value: record.id},
       {label: "Comparison", value: record.status, tone: record.tone}
-    ].concat(record.survey, record.join));
+    ];
+    if (record.imageSource) {
+      summaryItems.push({label: "Image source", value: record.imageSource});
+    }
+    renderInfo(summaryItems.concat(record.survey, record.join));
 
     satellite.src = record.patch;
     satellite.alt = "Satellite view for site " + record.id;
@@ -689,6 +696,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (value === "rejected") return record.comparison === "Field-rejected detection";
     if (value === "unmatched") return record.status === "No ID match";
     if (value === "offset") return record.offset !== null && record.offset > 10;
+    if (value === "manual") return record.isManualImageLabel;
     if (value === "new") return record.isNew;
     if (value === "positive") return record.larvae > 0;
     return true;
@@ -1037,6 +1045,7 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
         detected = _text(row.get("imagery_detected_habitat"))
         comparison = _text(row.get("detection_field_comparison"))
         is_new = normalize_site_id(site_id).startswith(("X", "Y"))
+        is_manual_image_label = normalize_site_id(site_id).startswith("N")
         count_value = row.get(count_field) if count_field else None
         try:
             larvae = int(float(count_value)) if _text(count_value) else 0
@@ -1094,6 +1103,12 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
             ]
             join_details = [item for item in join_details if item["value"]]
 
+        image_source = (
+            "" if is_new else
+            "Manual image label (N)" if is_manual_image_label else
+            "Original image detection" if detected else ""
+        )
+
         inspection_records.append({
             "id": display_site_id,
             "rawId": site_id,
@@ -1106,6 +1121,8 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
             "offset": offset,
             "larvae": larvae,
             "isNew": is_new,
+            "isManualImageLabel": is_manual_image_label,
+            "imageSource": image_source,
             "survey": survey_details,
             "join": join_details,
             "photos": record_photos,
@@ -1150,6 +1167,7 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
       <option value="rejected">Field rejected detection</option>
       <option value="unmatched">No ID match</option>
       <option value="offset">Offset above 10 m</option>
+      <option value="manual">N manual image labels</option>
       <option value="new">New sites</option>
       <option value="positive">Larvae positive</option>
     </select>
@@ -1164,7 +1182,7 @@ def build_html(gdf, patch_src, patch_metres, patch_px, photo_src, title,
           <a id="inspectionSatelliteLink" class="openFull" target="_blank" rel="noopener">Open image</a>
         </div>
         <div class="classHeading image">
-          <span>Image classification</span>
+          <span id="inspectionImageClassLabel">Image classification</span>
           <strong id="inspectionImageClass"></strong>
         </div>
       </div>
